@@ -6,11 +6,13 @@ import logging
 import os
 import platform
 import threading
+import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -91,8 +93,24 @@ class AnalysisCache:
             log.warning("No se pudo guardar la caché de análisis: %s", exc)
 
     def set(self, key: str, value: dict) -> None:
+        """Guarda un análisis nuevo conservando la marca manual, si la hay."""
         with self._lock:
-            self._data[key] = value
+            manual = (self._data.get(key) or {}).get("manual")
+            self._data[key] = {**value, **({"manual": manual} if manual else {})}
+            self._save()
+
+    def update(self, key: str, **fields) -> None:
+        with self._lock:
+            entry = dict(self._data.get(key) or {})
+            for k, v in fields.items():
+                if v is None:
+                    entry.pop(k, None)
+                else:
+                    entry[k] = v
+            if entry:
+                self._data[key] = entry
+            else:
+                self._data.pop(key, None)
             self._save()
 
     def drop(self, key: str) -> None:
@@ -160,6 +178,10 @@ class SettingsRequest(BaseModel):
     api_key: str = Field(min_length=1, max_length=512)
 
 
+class ManualStatusRequest(BaseModel):
+    status: str | None = Field(default=None, pattern="^(es|no_es)$")
+
+
 class FfprobeRequest(BaseModel):
     path: str = Field(default="", max_length=1024)
 
@@ -184,8 +206,10 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
     main_name = (main or {}).get("short_name") or (main or {}).get("name") or ""
     name_guess = language.guess_from_name(raw.get("name") or "", main_name)
 
-    analysis = cache.get(_key(kind, raw.get("id")))
-    if analysis and analysis.get("status"):
+    analysis = cache.get(_key(kind, raw.get("id"))) or {}
+    if analysis.get("manual"):
+        audio_status, source = analysis["manual"], "manual"
+    elif analysis.get("status"):
         audio_status, source = analysis["status"], "ffprobe"
     else:
         audio_status, source = name_guess, "nombre"
@@ -202,8 +226,9 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
         "main_file": main_name,
         "audio_status": audio_status,
         "audio_source": source,
-        "audio_languages": (analysis or {}).get("languages", []),
-        "analysis_error": (analysis or {}).get("error"),
+        "audio_languages": analysis.get("languages", []),
+        "audio_auto_status": analysis.get("status") or name_guess,
+        "analysis_error": analysis.get("error"),
     }
 
 
@@ -338,14 +363,122 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         items.sort(key=lambda i: i["size"] or 0, reverse=True)
         return {"items": items}
 
-    @app.post("/api/analyze")
-    def analyze(req: ItemsRequest, client=Depends(get_client)):
+    # -- análisis y escucha ------------------------------------------------
+    links: dict[tuple, tuple[float, str]] = {}
+    clips: OrderedDict[tuple, tuple[bytes, str]] = OrderedDict()
+    LINK_TTL = 30 * 60
+
+    def link_for(client, kind: str, item_id: int, file_id: int) -> str:
+        """Enlace de descarga de TorBox, reutilizado durante un rato."""
+        k = (kind, item_id, file_id)
+        now = time.monotonic()
+        if k in links and now - links[k][0] < LINK_TTL:
+            return links[k][1]
+        url = client.download_link(kind, item_id, file_id)
+        links[k] = (now, url)
+        return url
+
+    def probe_item(client, ffprobe: str, kind: str, raw: dict) -> dict:
+        main = language.pick_main_video(raw.get("files") or [])
+        if main is None:
+            result = {"status": language.UNKNOWN, "languages": [], "tracks": [], "error": "Sin archivo de vídeo"}
+        else:
+            info = language.probe_media(link_for(client, kind, raw["id"], main["id"]), ffprobe)
+            langs = [t["language"] for t in info["tracks"]]
+            result = {
+                "status": language.classify_audio_languages(langs),
+                "languages": langs,
+                "tracks": info["tracks"],
+                "duration": info["duration"],
+                "error": None,
+            }
+        cache.set(_key(kind, raw.get("id")), result)
+        return result
+
+    def find_raw(client, kind: str, item_id: int) -> dict:
+        try:
+            for raw in client.list(kind):
+                if raw.get("id") == item_id:
+                    return raw
+        except TorboxError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=404, detail="No encontrado en TorBox")
+
+    def require_ffprobe() -> str:
         ffprobe = language.find_ffprobe(settings.get("ffprobe_path"))
         if not ffprobe:
             raise HTTPException(
                 status_code=400,
                 detail="No se encuentra ffprobe. Instala ffmpeg o indica su ruta en ⚙ Ajustes.",
             )
+        return ffprobe
+
+    @app.get("/api/items/{kind}/{item_id}/tracks")
+    def item_tracks(kind: str, item_id: int, client=Depends(get_client)):
+        if kind not in KINDS:
+            raise HTTPException(status_code=404, detail="Tipo desconocido")
+        entry = cache.get(_key(kind, item_id)) or {}
+        if "tracks" not in entry:
+            ffprobe = require_ffprobe()
+            raw = find_raw(client, kind, item_id)
+            try:
+                probe_item(client, ffprobe, kind, raw)
+            except TorboxError as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=502, detail=f"No se pudo leer el archivo: {str(exc)[:300]}")
+            entry = cache.get(_key(kind, item_id)) or {}
+        return {
+            "tracks": entry.get("tracks", []),
+            "duration": entry.get("duration"),
+            "status": entry.get("status"),
+            "manual": entry.get("manual"),
+            "error": entry.get("error"),
+            "can_play": language.find_ffmpeg(language.find_ffprobe(settings.get("ffprobe_path"))) is not None,
+        }
+
+    @app.get("/api/items/{kind}/{item_id}/clip")
+    def item_clip(
+        kind: str, item_id: int,
+        track: int = Query(0, ge=0, le=64),
+        start: float = Query(0, ge=0, le=24 * 3600),
+        duration: float = Query(30, ge=5, le=90),
+        client=Depends(get_client),
+    ):
+        if kind not in KINDS:
+            raise HTTPException(status_code=404, detail="Tipo desconocido")
+        ffmpeg = language.find_ffmpeg(language.find_ffprobe(settings.get("ffprobe_path")))
+        if not ffmpeg:
+            raise HTTPException(status_code=400, detail="No se encuentra ffmpeg (necesario para escuchar el audio).")
+        ck = (kind, item_id, track, round(start), round(duration))
+        if ck not in clips:
+            raw = find_raw(client, kind, item_id)
+            main = language.pick_main_video(raw.get("files") or [])
+            if main is None:
+                raise HTTPException(status_code=400, detail="Este elemento no tiene archivo de vídeo")
+            try:
+                url = link_for(client, kind, item_id, main["id"])
+                clips[ck] = language.extract_audio_clip(url, track, start, duration, ffmpeg)
+            except TorboxError as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=502, detail=f"No se pudo extraer el audio: {str(exc)[:300]}")
+            while len(clips) > 12:
+                clips.popitem(last=False)
+        clips.move_to_end(ck)
+        data, mime = clips[ck]
+        return Response(content=data, media_type=mime, headers={"Cache-Control": "private, max-age=600"})
+
+    @app.put("/api/items/{kind}/{item_id}/audio_status")
+    def set_manual_status(kind: str, item_id: int, req: ManualStatusRequest):
+        if kind not in KINDS:
+            raise HTTPException(status_code=404, detail="Tipo desconocido")
+        cache.update(_key(kind, item_id), manual=req.status)
+        return {"ok": True, "manual": req.status}
+
+    @app.post("/api/analyze")
+    def analyze(req: ItemsRequest, client=Depends(get_client)):
+        ffprobe = require_ffprobe()
         wanted = {_key(r.kind, r.id) for r in req.items}
         raws = {}
         for kind in {r.kind for r in req.items}:
@@ -361,17 +494,10 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             if key not in raws:
                 return {"key": key, "error": "No encontrado en TorBox"}
             kind, raw = raws[key]
-            main = language.pick_main_video(raw.get("files") or [])
-            if main is None:
-                result = {"status": language.UNKNOWN, "languages": [], "error": "Sin archivo de vídeo"}
-            else:
-                try:
-                    url = client.download_link(kind, raw["id"], main["id"])
-                    langs = language.probe_audio_languages(url, ffprobe)
-                    result = {"status": language.classify_audio_languages(langs), "languages": langs, "error": None}
-                except Exception as exc:  # noqa: BLE001 - se informa al usuario
-                    return {"key": key, "error": str(exc)[:300]}
-            cache.set(key, result)
+            try:
+                result = probe_item(client, ffprobe, kind, raw)
+            except Exception as exc:  # noqa: BLE001 - se informa al usuario
+                return {"key": key, "error": str(exc)[:300]}
             return {"key": key, **result}
 
         with ThreadPoolExecutor(max_workers=4) as pool:

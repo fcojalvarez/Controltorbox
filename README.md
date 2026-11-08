@@ -16,6 +16,14 @@ audio en español** y te deja eliminarlos en bloque para liberar espacio.
      vídeo principal y lee sólo las cabeceras del archivo para obtener las pistas de
      audio reales (`eng`, `spa`, …). No descarga el archivo completo. El resultado se
      guarda en `data/analysis.json` para no repetirlo.
+- **Escuchar el audio** (botón *▶ Escuchar* en cada fila): muestra las pistas de audio
+  del vídeo (idioma, códec, canales y título) y reproduce un fragmento de 15, 30 o 60 s
+  de la pista que elijas, desde el punto que quieras. ffmpeg recorta solo ese trozo
+  directamente desde TorBox y lo convierte a MP3, así que funciona con MKV, AC3, DTS,
+  E-AC3… aunque el navegador no los soporte.
+- **Marcar a mano** tras escucharlo: *Sí, tiene español* / *No tiene español* /
+  *Automático*. La marca manual tiene prioridad sobre la detección automática y se
+  conserva aunque vuelvas a analizar.
 - Selección múltiple, total de espacio a liberar y eliminación con confirmación.
 
 > El filtro por defecto es **"Sin español (incluye desconocido)"**. Muchos
@@ -43,7 +51,8 @@ uvicorn app.main:app --port 8000
 
 #### ffmpeg / ffprobe (recomendado)
 
-Para el botón **Analizar audio** hace falta `ffprobe`, que viene con ffmpeg:
+Para **Analizar audio** hace falta `ffprobe` y para **▶ Escuchar** hace falta `ffmpeg`;
+los dos vienen en el mismo paquete:
 
 | Sistema | Instalación |
 |---|---|

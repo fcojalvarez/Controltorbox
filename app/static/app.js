@@ -22,9 +22,9 @@ function banner(msg, kind = "error") {
   el.className = `banner ${kind}`;
 }
 
-async function api(path, body) {
+async function api(path, body, method = "POST") {
   const opts = body
-    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+    ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
     : {};
   const res = await fetch(path, opts);
   return parseResponse(res);
@@ -104,16 +104,27 @@ function render() {
     const badge = document.createElement("span");
     badge.className = `badge ${it.audio_status}`;
     badge.textContent = AUDIO_LABEL[it.audio_status] || it.audio_status;
-    badge.title = it.audio_source === "ffprobe"
-      ? `Analizado: ${it.audio_languages.join(", ") || "sin pistas"}`
-      : "Estimado por el nombre del archivo";
+    badge.title = {
+      ffprobe: `Analizado: ${it.audio_languages.join(", ") || "sin pistas"}`,
+      manual: "Marcado a mano tras escucharlo",
+    }[it.audio_source] || "Estimado por el nombre del archivo";
     tdAudio.appendChild(badge);
     const src = document.createElement("small");
-    src.textContent = it.audio_source === "ffprobe"
-      ? (it.audio_languages.join(", ") || "sin etiquetas")
-      : "por nombre";
+    src.textContent = {
+      ffprobe: it.audio_languages.join(", ") || "sin etiquetas",
+      manual: "marcado a mano",
+    }[it.audio_source] || "por nombre";
     if (it.analysis_error) src.textContent += ` · ${it.analysis_error}`;
     tdAudio.appendChild(src);
+    if (it.has_video) {
+      const play = document.createElement("button");
+      play.className = "secondary small";
+      play.textContent = "▶ Escuchar";
+      play.title = "Escuchar un fragmento de cada pista de audio";
+      play.disabled = !state.ffprobe;
+      play.addEventListener("click", () => openPlayer(it));
+      tdAudio.appendChild(play);
+    }
 
     tr.append(tdCheck, tdName, tdKind, tdSize, tdAudio);
     tbody.appendChild(tr);
@@ -232,6 +243,159 @@ async function deleteSelected() {
     btn.textContent = "Eliminar seleccionados";
     updateSelection();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Escuchar el audio
+// ---------------------------------------------------------------------------
+const LANG_NAMES = {
+  spa: "Español", es: "Español", eng: "Inglés", en: "Inglés", jpn: "Japonés", ja: "Japonés",
+  fre: "Francés", fra: "Francés", fr: "Francés", ger: "Alemán", deu: "Alemán", de: "Alemán",
+  ita: "Italiano", it: "Italiano", por: "Portugués", pt: "Portugués", kor: "Coreano", ko: "Coreano",
+  chi: "Chino", zho: "Chino", rus: "Ruso", cat: "Catalán", und: "Sin etiqueta",
+};
+const player = { item: null, duration: null, playing: null };
+
+function fmtTime(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const mm = String(m).padStart(h ? 2 : 1, "0"), ss = String(s).padStart(2, "0");
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function channelsLabel(n) {
+  return { 1: "mono", 2: "estéreo", 6: "5.1", 8: "7.1" }[n] || (n ? `${n} canales` : "");
+}
+
+function playerStart() {
+  const pct = Number($("player-pos").value) / 100;
+  return player.duration ? Math.floor(player.duration * pct) : Number($("player-pos").value) * 6;
+}
+
+function updatePosLabel() {
+  $("player-pos-label").textContent = player.duration
+    ? `${fmtTime(playerStart())} de ${fmtTime(player.duration)}`
+    : fmtTime(playerStart());
+}
+
+function stopPlayer() {
+  const audio = $("player-audio");
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  player.playing = null;
+  for (const b of document.querySelectorAll("#player-tracks button")) b.textContent = "▶ Escuchar";
+}
+
+function renderManual(manual) {
+  for (const b of document.querySelectorAll("#player-manual button")) {
+    b.classList.toggle("active", (b.dataset.status || null) === (manual || null));
+  }
+}
+
+async function openPlayer(it) {
+  player.item = it;
+  player.duration = null;
+  $("player-title").textContent = it.name;
+  $("player-error").classList.add("hidden");
+  $("player-tracks").innerHTML = '<li class="hint">Leyendo las pistas de audio…</li>';
+  $("player-pos").value = 15;
+  updatePosLabel();
+  renderManual(it.audio_source === "manual" ? it.audio_status : null);
+  const dlg = $("player");
+  if (!dlg.open) dlg.showModal();
+  try {
+    const info = await api(`/api/items/${it.kind}/${it.id}/tracks`);
+    if (player.item !== it) return;
+    player.duration = info.duration;
+    updatePosLabel();
+    renderManual(info.manual);
+    const list = $("player-tracks");
+    list.textContent = "";
+    if (!info.tracks.length) {
+      list.innerHTML = `<li class="hint">${info.error || "No se encontraron pistas de audio."}</li>`;
+    }
+    for (const t of info.tracks) {
+      const li = document.createElement("li");
+      const lang = (t.language || "und").toLowerCase();
+      const label = document.createElement("div");
+      const strong = document.createElement("strong");
+      strong.textContent = `Pista ${t.n + 1} · ${LANG_NAMES[lang] || lang.toUpperCase()}`;
+      if (lang === "spa" || lang.startsWith("es")) li.classList.add("is-es");
+      const meta = document.createElement("small");
+      meta.textContent = [t.codec.toUpperCase(), channelsLabel(t.channels), t.title && `«${t.title}»`]
+        .filter(Boolean).join(" · ");
+      label.append(strong, meta);
+      const btn = document.createElement("button");
+      btn.className = "secondary small";
+      btn.textContent = "▶ Escuchar";
+      btn.disabled = !info.can_play;
+      if (!info.can_play) btn.title = "No se encuentra ffmpeg";
+      btn.addEventListener("click", () => playTrack(t.n, btn));
+      li.append(label, btn);
+      list.appendChild(li);
+    }
+  } catch (err) {
+    $("player-tracks").textContent = "";
+    showPlayerError(err.message);
+  }
+}
+
+function showPlayerError(msg) {
+  const el = $("player-error");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+async function playTrack(n, btn) {
+  const it = player.item;
+  const audio = $("player-audio");
+  if (player.playing === n && !audio.paused) { stopPlayer(); return; }
+  stopPlayer();
+  $("player-error").classList.add("hidden");
+  const params = new URLSearchParams({
+    track: n, start: playerStart(), duration: $("player-len").value,
+  });
+  const url = `/api/items/${it.kind}/${it.id}/clip?${params}`;
+  btn.textContent = "Cargando…";
+  btn.disabled = true;
+  try {
+    // Primero comprobamos que el servidor puede generar el fragmento para mostrar el error real.
+    const res = await fetch(url);
+    if (!res.ok) await parseResponse(res);
+    const blob = await res.blob();
+    if (player.item !== it) return;
+    audio.src = URL.createObjectURL(blob);
+    await audio.play();
+    player.playing = n;
+    btn.textContent = "■ Parar";
+  } catch (err) {
+    btn.textContent = "▶ Escuchar";
+    showPlayerError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function setManual(status) {
+  const it = player.item;
+  try {
+    await api(`/api/items/${it.kind}/${it.id}/audio_status`, { status }, "PUT");
+    renderManual(status);
+    await load();
+  } catch (err) {
+    showPlayerError(err.message);
+  }
+}
+
+$("player-pos").addEventListener("input", updatePosLabel);
+$("player-pos").addEventListener("change", stopPlayer);
+$("player-len").addEventListener("change", stopPlayer);
+$("player-close").addEventListener("click", () => $("player").close());
+$("player").addEventListener("close", () => { stopPlayer(); player.item = null; });
+$("player-audio").addEventListener("ended", stopPlayer);
+for (const b of document.querySelectorAll("#player-manual button")) {
+  b.addEventListener("click", () => setManual(b.dataset.status || null));
 }
 
 // ---------------------------------------------------------------------------

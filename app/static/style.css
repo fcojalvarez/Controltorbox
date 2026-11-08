@@ -80,3 +80,19 @@ menu .spacer { flex: 1; }
 #ffprobe-status.ok { color: var(--ok); }
 #ffprobe-status.missing { color: var(--warn); }
 #ffprobe-help { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); }
+
+button.small { padding: 4px 10px; font-size: .85rem; }
+td button.small { display: block; margin-top: 6px; }
+.mono { font-variant-numeric: tabular-nums; }
+.player-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.player-controls input[type=range] { flex: 1 1 160px; }
+.player-controls select { padding: 4px 8px; }
+.tracks { list-style: none; padding: 0 !important; margin: 0 0 12px; max-height: none !important; }
+.tracks li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; }
+.tracks li.is-es { border-color: var(--ok); }
+.tracks li small { display: block; color: var(--muted); }
+#player audio { width: 100%; margin-bottom: 8px; }
+.manual { border-top: 1px solid var(--border); padding-top: 12px; margin: 8px 0 12px; }
+.manual > span { display: block; margin-bottom: 8px; font-weight: 600; }
+.manual div { display: flex; gap: 8px; flex-wrap: wrap; }
+.manual button.active { background: var(--accent); color: #fff; border-color: transparent; }

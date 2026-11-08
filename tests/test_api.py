@@ -74,7 +74,13 @@ def test_analyze_uses_cache(setup, monkeypatch):
     from app import language
     monkeypatch.setattr(language, "find_ffprobe", lambda custom=None: "/x/ffprobe")
     monkeypatch.setattr(TorboxClient, "download_link", lambda self, k, i, f: "http://x/file.mkv")
-    monkeypatch.setattr(language, "probe_audio_languages", lambda url, ffprobe: ["eng", "jpn"] if ffprobe == "/x/ffprobe" else [])
+    monkeypatch.setattr(
+        language, "probe_media",
+        lambda url, ffprobe: {"duration": 100.0, "tracks": [
+            {"n": 0, "language": "eng", "title": "", "codec": "ac3", "channels": 6},
+            {"n": 1, "language": "jpn", "title": "", "codec": "aac", "channels": 2},
+        ]} if ffprobe == "/x/ffprobe" else {"duration": None, "tracks": []},
+    )
     r = client.post("/api/analyze", json={"items": [{"kind": "torrent", "id": 1}]})
     assert r.json()["results"][0]["status"] == "no_es"
     item = next(i for i in client.get("/api/items").json()["items"] if i["id"] == 1)
@@ -174,3 +180,51 @@ def test_ffprobe_setting(setup, tmp_path, monkeypatch):
     # Vacío -> detección automática
     r = client.put("/api/settings/ffprobe", json={"path": ""})
     assert r.json()["ffprobe_custom"] == ""
+
+
+
+def test_tracks_clip_and_manual_status(setup, monkeypatch):
+    client, _ = setup
+    from app import language
+    monkeypatch.setattr(language, "find_ffprobe", lambda custom=None: "/x/ffprobe")
+    monkeypatch.setattr(language, "find_ffmpeg", lambda p=None: "/x/ffmpeg")
+    links = []
+    monkeypatch.setattr(TorboxClient, "download_link", lambda self, k, i, f: links.append((k, i, f)) or "http://x/f.mkv")
+    monkeypatch.setattr(language, "probe_media", lambda url, ffprobe: {
+        "duration": 5400.0,
+        "tracks": [{"n": 0, "language": "und", "title": "", "codec": "ac3", "channels": 6}],
+    })
+    calls = []
+
+    def fake_clip(url, track, start, duration, ffmpeg):
+        calls.append((url, track, start, duration, ffmpeg))
+        return b"ID3fake", "audio/mpeg"
+
+    monkeypatch.setattr(language, "extract_audio_clip", fake_clip)
+
+    r = client.get("/api/items/torrent/2/tracks").json()
+    assert r["duration"] == 5400.0 and r["tracks"][0]["language"] == "und" and r["can_play"]
+    assert r["status"] == "unknown"
+
+    r = client.get("/api/items/torrent/2/clip", params={"track": 0, "start": 600, "duration": 30})
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg" and r.content == b"ID3fake"
+    client.get("/api/items/torrent/2/clip", params={"track": 0, "start": 600, "duration": 30})
+    assert len(calls) == 1          # el fragmento se reutiliza
+    assert len(links) == 1          # el enlace de TorBox también
+    assert calls[0][1:] == (0, 600.0, 30.0, "/x/ffmpeg")
+
+    assert client.get("/api/items/torrent/2/clip", params={"duration": 9999}).status_code == 422
+    assert client.get("/api/items/foo/2/clip").status_code == 404
+
+    # Marcar a mano tras escuchar: prevalece sobre el análisis y sobrevive a re-analizar
+    assert client.put("/api/items/torrent/2/audio_status", json={"status": "es"}).status_code == 200
+    item = next(i for i in client.get("/api/items").json()["items"] if i["id"] == 2)
+    assert item["audio_status"] == "es" and item["audio_source"] == "manual"
+    client.post("/api/analyze", json={"items": [{"kind": "torrent", "id": 2}]})
+    item = next(i for i in client.get("/api/items").json()["items"] if i["id"] == 2)
+    assert item["audio_status"] == "es" and item["audio_source"] == "manual"
+    # Quitar la marca vuelve al resultado automático
+    client.put("/api/items/torrent/2/audio_status", json={"status": None})
+    item = next(i for i in client.get("/api/items").json()["items"] if i["id"] == 2)
+    assert item["audio_source"] == "ffprobe" and item["audio_status"] == "unknown"
+    assert client.put("/api/items/torrent/2/audio_status", json={"status": "x"}).status_code == 422

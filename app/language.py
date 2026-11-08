@@ -149,29 +149,93 @@ def ffprobe_available(custom: str | None = None) -> bool:
     return find_ffprobe(custom) is not None
 
 
-def probe_audio_languages(url: str, ffprobe: str = "ffprobe", timeout: int = 60) -> list[str]:
-    """Usa ffprobe para leer las pistas de audio de una URL remota.
+def find_ffmpeg(ffprobe_path: str | None = None) -> str | None:
+    """Localiza ffmpeg: junto a ffprobe, en el PATH o en las rutas típicas."""
+    exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    if ffprobe_path:
+        sibling = Path(ffprobe_path).with_name(exe)
+        if sibling.is_file():
+            return str(sibling)
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    for p in _candidate_paths():
+        cand = p.with_name(exe)
+        if cand.is_file():
+            return str(cand)
+    return None
 
-    Si una pista no tiene etiqueta de idioma pero su título menciona
-    el idioma (p.ej. "Castellano AC3 5.1"), se usa el título.
+
+def probe_media(url: str, ffprobe: str = "ffprobe", timeout: int = 60) -> dict:
+    """Lee duración y pistas de audio de una URL remota con ffprobe.
+
+    Devuelve {"duration": float|None, "tracks": [...]} donde cada pista tiene
+    n (posición entre las pistas de audio), language, title, codec y channels.
+    Si una pista no tiene etiqueta de idioma pero su título lo menciona
+    (p.ej. "Castellano AC3 5.1"), se usa el título.
     """
     cmd = [
         ffprobe, "-v", "error",
         "-select_streams", "a",
-        "-show_entries", "stream=index:stream_tags=language,title",
+        "-show_entries", "stream=index,codec_name,channels:stream_tags=language,title:format=duration",
         "-of", "json", url,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "ffprobe falló")
     data = json.loads(proc.stdout or "{}")
-    langs: list[str] = []
-    for stream in data.get("streams", []):
+    tracks = []
+    for n, stream in enumerate(data.get("streams", [])):
         tags = {k.lower(): v for k, v in (stream.get("tags") or {}).items()}
         lang = (tags.get("language") or "").strip()
-        title = tags.get("title") or ""
+        title = (tags.get("title") or "").strip()
         if (not lang or lang.lower() in UNDEFINED_CODES) and title:
             if guess_from_name(title) == ES:
                 lang = "spa"
-        langs.append(lang or "und")
-    return langs
+        tracks.append({
+            "n": n,
+            "language": lang or "und",
+            "title": title,
+            "codec": stream.get("codec_name") or "",
+            "channels": stream.get("channels"),
+        })
+    try:
+        duration = float((data.get("format") or {}).get("duration"))
+    except (TypeError, ValueError):
+        duration = None
+    return {"duration": duration, "tracks": tracks}
+
+
+def probe_audio_languages(url: str, ffprobe: str = "ffprobe", timeout: int = 60) -> list[str]:
+    return [t["language"] for t in probe_media(url, ffprobe, timeout)["tracks"]]
+
+
+def extract_audio_clip(
+    url: str, track: int, start: float, duration: float,
+    ffmpeg: str = "ffmpeg", timeout: int = 120,
+) -> tuple[bytes, str]:
+    """Extrae un fragmento de una pista de audio y lo convierte a MP3.
+
+    `-ss` antes de `-i` hace que ffmpeg salte directamente a esa posición
+    (con peticiones HTTP por rangos), así que solo se descarga el fragmento.
+    Si el ffmpeg instalado no tiene codificador MP3, se usa WAV.
+    """
+    base = [
+        ffmpeg, "-v", "error", "-nostdin",
+        "-ss", f"{max(0.0, start):.2f}", "-i", url,
+        "-map", f"0:a:{int(track)}", "-t", f"{duration:.2f}",
+        "-vn", "-sn", "-ac", "2",
+    ]
+    attempts = [
+        (["-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"], "audio/mpeg"),
+        (["-c:a", "pcm_s16le", "-ar", "44100", "-f", "wav", "pipe:1"], "audio/wav"),
+    ]
+    last_err = ""
+    for args, mime in attempts:
+        proc = subprocess.run(base + args, capture_output=True, timeout=timeout)
+        if proc.returncode == 0 and proc.stdout:
+            return proc.stdout, mime
+        last_err = proc.stderr.decode("utf-8", "replace").strip()
+        if "libmp3lame" not in last_err and "Unknown encoder" not in last_err:
+            break  # el problema no es el codificador: no tiene sentido reintentar
+    raise RuntimeError(last_err[-400:] or "ffmpeg no devolvió audio")

@@ -77,6 +77,35 @@
     </form>
   </dialog>
 
+  <dialog id="player">
+    <h2>Escuchar audio</h2>
+    <p class="hint" id="player-title"></p>
+    <div class="player-controls">
+      <label for="player-pos">Desde</label>
+      <input id="player-pos" type="range" min="0" max="95" step="1" value="15">
+      <span id="player-pos-label" class="mono"></span>
+      <select id="player-len" title="Duración del fragmento">
+        <option value="15">15 s</option>
+        <option value="30" selected>30 s</option>
+        <option value="60">60 s</option>
+      </select>
+    </div>
+    <ul id="player-tracks" class="tracks"></ul>
+    <audio id="player-audio" controls></audio>
+    <p id="player-error" class="warn-text hidden"></p>
+    <div id="player-manual" class="manual">
+      <span>Tras escucharlo, ¿tiene audio en español?</span>
+      <div>
+        <button type="button" class="secondary small" data-status="es">Sí, tiene español</button>
+        <button type="button" class="secondary small" data-status="no_es">No tiene español</button>
+        <button type="button" class="secondary small" data-status="">Automático</button>
+      </div>
+    </div>
+    <menu>
+      <button type="button" id="player-close" class="secondary">Cerrar</button>
+    </menu>
+  </dialog>
+
   <dialog id="settings">
     <form id="settings-form" method="dialog">
       <h2>Ajustes</h2>
