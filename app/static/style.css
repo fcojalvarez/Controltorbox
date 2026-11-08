@@ -76,10 +76,6 @@ menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 0
 .key-row input { flex: 1; min-width: 0; font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 #settings label { font-weight: 600; }
 menu .spacer { flex: 1; }
-#settings hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
-#ffprobe-status.ok { color: var(--ok); }
-#ffprobe-status.missing { color: var(--warn); }
-#ffprobe-help { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); }
 
 button.small { padding: 4px 10px; font-size: .85rem; }
 td button.small { display: block; margin-top: 6px; }
@@ -96,4 +92,3 @@ td button.small { display: block; margin-top: 6px; }
 .manual > span { display: block; margin-bottom: 8px; font-weight: 600; }
 .manual div { display: flex; gap: 8px; flex-wrap: wrap; }
 .manual button.active { background: var(--accent); color: #fff; border-color: transparent; }
-#ffprobe-status { white-space: pre-line; }

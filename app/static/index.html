@@ -45,7 +45,7 @@
 
   <section class="actions">
     <span id="selection-info">0 seleccionados</span>
-    <button id="btn-analyze" class="secondary" disabled title="Lee las pistas de audio reales con ffprobe">Analizar audio</button>
+    <button id="btn-analyze" class="secondary" disabled title="Lee las pistas de audio reales del archivo">Analizar audio</button>
     <button id="btn-delete" class="danger" disabled>Eliminar seleccionados</button>
   </section>
 
@@ -115,16 +115,7 @@
         <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Pega aquí tu API token">
         <button type="button" id="btn-toggle-key" class="secondary" title="Mostrar/ocultar">👁</button>
       </div>
-      <p class="hint">Lo encontrarás en torbox.app → Settings → API Key. Se guarda solo en este equipo.</p>
-      <hr>
-      <label for="ffprobe-path">Análisis y escucha del audio (ffmpeg)</label>
-      <p class="hint" id="ffprobe-status"></p>
-      <p class="hint hidden" id="ffprobe-help"></p>
-      <div class="key-row">
-        <input id="ffprobe-path" type="text" autocomplete="off" spellcheck="false" placeholder="Opcional: ruta a un ffprobe propio o a su carpeta bin">
-        <button type="button" id="btn-save-ffprobe" class="secondary">Usar ruta</button>
-      </div>
-      <p class="hint">Déjalo vacío y pulsa «Usar ruta» para volver a la detección automática.</p>
+      <p class="hint">Lo encontrarás en torbox.app → Settings → API Key. Se guarda en este navegador, así que no tendrás que volver a ponerlo al actualizar la app.</p>
       <p id="settings-error" class="warn-text hidden"></p>
       <menu>
         <button type="button" id="btn-clear-key" class="secondary">Borrar token</button>

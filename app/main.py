@@ -4,14 +4,13 @@ from __future__ import annotations
 import json
 import logging
 import os
-import platform
 import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -182,17 +181,6 @@ class ManualStatusRequest(BaseModel):
     status: str | None = Field(default=None, pattern="^(es|no_es)$")
 
 
-class FfprobeRequest(BaseModel):
-    path: str = Field(default="", max_length=1024)
-
-
-INSTALL_HELP = {
-    "Windows": "ffmpeg se instala solo con la app: ejecuta «pip install -r requirements.txt» y reinicia. Si aun así no aparece, en PowerShell: winget install Gyan.FFmpeg",
-    "Darwin": "ffmpeg se instala solo con la app: ejecuta «pip install -r requirements.txt» y reinicia. Alternativa: brew install ffmpeg",
-    "Linux": "ffmpeg se instala solo con la app: ejecuta «pip install -r requirements.txt» y reinicia. Alternativa: sudo apt install ffmpeg",
-}
-
-
 # ---------------------------------------------------------------------------
 # Lógica
 # ---------------------------------------------------------------------------
@@ -238,8 +226,14 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
     cache = AnalysisCache(data_dir / "analysis.json")
     settings = SettingsStore(data_dir / "settings.json")
 
-    def current_api_key() -> tuple[str, str]:
-        """Devuelve (clave, origen). La guardada en ajustes tiene prioridad."""
+    def current_api_key(browser_token: str | None = None) -> tuple[str, str]:
+        """Devuelve (clave, origen).
+
+        Prioridad: token guardado en el navegador (cabecera X-Torbox-Token),
+        token guardado en el servidor por versiones anteriores, y .env.
+        """
+        if browser_token and browser_token.strip():
+            return browser_token.strip(), "navegador"
         saved = settings.get("api_key") or ""
         if saved:
             return saved, "ajustes"
@@ -267,9 +261,9 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             content={"detail": f"Error interno: {type(exc).__name__}: {exc}"},
         )
 
-    def get_client():
+    def get_client(x_torbox_token: str | None = Header(default=None)):
         try:
-            client = make_client(current_api_key()[0])
+            client = make_client(current_api_key(x_torbox_token)[0])
         except TorboxError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         try:
@@ -290,8 +284,8 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         return items
 
     @app.get("/api/status")
-    def status():
-        key, source = current_api_key()
+    def status(x_torbox_token: str | None = Header(default=None)):
+        key, source = current_api_key(x_torbox_token)
         return {
             "api_key_configured": bool(key),
             "api_key_source": source,
@@ -300,51 +294,23 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         }
 
     def tools() -> dict:
-        return language.find_tools(settings.get("ffprobe_path"))
-
-    def ffprobe_info() -> dict:
-        custom = settings.get("ffprobe_path") or ""
-        t = tools()
-        return {
-            "ffprobe_found": t["ffprobe"] or "",
-            "ffmpeg_found": t["ffmpeg"] or "",
-            "ffmpeg_bundled": bool(t["ffmpeg"]) and t["ffmpeg"] == language.bundled_ffmpeg(),
-            "ffprobe_custom": custom,
-            "install_help": INSTALL_HELP.get(platform.system(), INSTALL_HELP["Linux"]),
-        }
+        return language.find_tools()
 
     @app.get("/api/settings")
-    def get_settings():
-        key, source = current_api_key()
+    def get_settings(x_torbox_token: str | None = Header(default=None)):
+        key, source = current_api_key(x_torbox_token)
         return {
             "api_key_configured": bool(key),
             "api_key_masked": mask_key(key),
             "api_key_source": source,
-            **ffprobe_info(),
         }
-
-    @app.put("/api/settings/ffprobe")
-    def save_ffprobe(req: FfprobeRequest):
-        raw = req.path.strip()
-        if not raw:
-            settings.set("ffprobe_path", None)  # volver a la detección automática
-            return get_settings()
-        path = language.normalize_ffprobe_path(raw)
-        if not path.is_file():
-            raise HTTPException(status_code=400, detail=f"No existe el archivo {path}")
-        try:
-            language.check_ffprobe(path)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        settings.set("ffprobe_path", str(path))
-        return get_settings()
 
     @app.put("/api/settings")
     def save_settings(req: SettingsRequest):
         key = req.api_key.strip()
         if not key:
             raise HTTPException(status_code=400, detail="La API key no puede estar vacía.")
-        # Comprobamos que la clave funciona antes de guardarla.
+        # Solo se comprueba que funciona: el navegador la guarda en localStorage.
         try:
             client = make_client(key)
             try:
@@ -355,13 +321,14 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"La API key no es válida: {exc}")
         except Exception as exc:  # noqa: BLE001 - errores de red
             raise HTTPException(status_code=502, detail=f"No se pudo contactar con TorBox: {exc}")
-        settings.set("api_key", key)
-        return get_settings()
+        return get_settings(key)
 
     @app.delete("/api/settings/api_key")
     def clear_api_key():
-        settings.set("api_key", None)
-        return get_settings()
+        # Borra el token que guardaban en el servidor versiones anteriores.
+        if settings.get("api_key"):
+            settings.set("api_key", None)
+        return get_settings(None)
 
     @app.get("/api/items")
     def list_items(client=Depends(get_client)):

@@ -87,50 +87,62 @@ def test_analyze_uses_cache(setup, monkeypatch):
     assert item["audio_status"] == "no_es" and item["audio_source"] == "ffprobe"
 
 
-def test_settings_api_key(setup, monkeypatch):
+def test_settings_api_key_from_browser(setup, monkeypatch):
     client, _ = setup
     s = client.get("/api/settings").json()
     assert s["api_key_source"] == "env" and "test" not in s["api_key_masked"]
 
-    # Una clave inválida no se guarda
+    # Una clave inválida se rechaza
     r = client.put("/api/settings", json={"api_key": "mala"})
     assert r.status_code == 400 and "BAD_TOKEN" in r.json()["detail"]
-    assert client.get("/api/settings").json()["api_key_source"] == "env"
 
-    # La clave válida se guarda y tiene prioridad sobre el .env
+    # Una clave válida se acepta, pero el servidor NO la guarda (la guarda el navegador)
     r = client.put("/api/settings", json={"api_key": " nueva "})
-    assert r.status_code == 200
-    assert r.json()["api_key_source"] == "ajustes"
-    assert "nueva" not in r.json()["api_key_masked"][:-4]  # nunca se devuelve entera
+    assert r.status_code == 200 and r.json()["api_key_source"] == "navegador"
+    assert "nueva" not in r.json()["api_key_masked"]
     monkeypatch.delenv("TORBOX_API_KEY")
-    assert client.get("/api/items").status_code == 200
-
-    # Borrarla vuelve a dejar la app sin clave
-    client.delete("/api/settings/api_key")
     assert client.get("/api/status").json()["api_key_configured"] is False
     assert client.get("/api/items").status_code == 400
 
+    # El token enviado por el navegador en la cabecera es el que se usa
+    h = {"X-Torbox-Token": "nueva"}
+    assert client.get("/api/status", headers=h).json()["api_key_source"] == "navegador"
+    assert client.get("/api/items", headers=h).status_code == 200
+    assert client.get("/api/items", headers={"X-Torbox-Token": "mala"}).status_code == 502
 
-def test_settings_persist_on_disk(tmp_path, monkeypatch):
+
+def test_browser_token_wins_over_legacy_server_token(tmp_path, monkeypatch):
+    import json
     monkeypatch.delenv("TORBOX_API_KEY", raising=False)
-    transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"success": True, "data": []}))
-    factory = lambda key: TorboxClient(key, transport=transport)
-    TestClient(create_app(client_factory=factory, data_dir=tmp_path)).put("/api/settings", json={"api_key": "abcd1234"})
-    again = TestClient(create_app(client_factory=factory, data_dir=tmp_path))
-    assert again.get("/api/settings").json()["api_key_masked"].endswith("1234")
+    (tmp_path / "settings.json").write_text(json.dumps({"api_key": "viejo1234"}))
+    seen = []
+
+    def handler(r):
+        seen.append(r.headers["authorization"])
+        return httpx.Response(200, json={"success": True, "data": []})
+
+    transport = httpx.MockTransport(handler)
+    client = TestClient(create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path))
+    assert client.get("/api/settings").json()["api_key_source"] == "ajustes"  # compatibilidad
+    client.get("/api/items", headers={"X-Torbox-Token": "nuevo"})
+    assert set(seen) == {"Bearer nuevo"}
+    # «Borrar token» también elimina el antiguo del servidor
+    client.delete("/api/settings/api_key")
+    assert client.get("/api/status").json()["api_key_configured"] is False
 
 
-def test_settings_save_failure_returns_readable_error(tmp_path, monkeypatch):
-    monkeypatch.delenv("TORBOX_API_KEY", raising=False)
-    transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"success": True, "data": []}))
-    app = create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path)
+def test_storage_failure_returns_readable_error(tmp_path, monkeypatch):
+    import json
     from pathlib import Path
+    monkeypatch.delenv("TORBOX_API_KEY", raising=False)
+    (tmp_path / "settings.json").write_text(json.dumps({"api_key": "viejo1234"}))
+    app = create_app(client_factory=lambda k: TorboxClient(k), data_dir=tmp_path)
 
     def boom(self, *a, **kw):
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(Path, "write_text", boom)
-    r = TestClient(app, raise_server_exceptions=False).put("/api/settings", json={"api_key": "abc12345"})
+    r = TestClient(app, raise_server_exceptions=False).delete("/api/settings/api_key")
     assert r.status_code == 500
     assert "No se pudo guardar" in r.json()["detail"]
 
@@ -155,32 +167,6 @@ def test_default_data_dir_is_project_dir(monkeypatch, tmp_path):
     monkeypatch.delenv("CONTROLTORBOX_DATA_DIR", raising=False)
     monkeypatch.chdir(tmp_path)
     assert main.resolve_data_dir() == main.PROJECT_DIR / "data"
-
-
-def test_ffprobe_setting(setup, tmp_path, monkeypatch):
-    client, _ = setup
-    import shutil
-    real = shutil.which("ffprobe")
-    if not real:
-        pytest.skip("ffprobe no instalado")
-    # Una ruta que no existe se rechaza
-    r = client.put("/api/settings/ffprobe", json={"path": str(tmp_path / "nope")})
-    assert r.status_code == 400
-    # Un ejecutable que no es ffprobe se rechaza
-    fake = tmp_path / "ffprobe"
-    fake.write_text("#!/bin/sh\nexit 1\n"); fake.chmod(0o755)
-    assert client.put("/api/settings/ffprobe", json={"path": str(fake)}).status_code == 400
-    # Se acepta la carpeta que lo contiene y queda guardado
-    from pathlib import Path
-    r = client.put("/api/settings/ffprobe", json={"path": str(Path(real).parent)})
-    assert r.status_code == 200 and r.json()["ffprobe_custom"] == real
-    # Sin PATH sigue encontrándolo gracias a la ruta guardada
-    monkeypatch.setenv("PATH", "")
-    assert client.get("/api/status").json()["ffprobe"] is True
-    # Vacío -> detección automática
-    r = client.put("/api/settings/ffprobe", json={"path": ""})
-    assert r.json()["ffprobe_custom"] == ""
-
 
 
 def test_tracks_clip_and_manual_status(setup, monkeypatch):

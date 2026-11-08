@@ -35,12 +35,15 @@ audio en español** y te deja eliminarlos en bloque para liberar espacio.
 
 Arranca la app (abajo) y abre http://localhost:8000. La primera vez se abre
 **⚙ Ajustes**: pega tu API token de TorBox (torbox.app → *Settings* → *API Key*) y
-pulsa **Guardar**. La app comprueba que el token funciona antes de guardarlo en
-`data/settings.json` (solo en tu equipo, con permisos restringidos). Desde Ajustes
-puedes cambiarlo o borrarlo cuando quieras.
+pulsa **Guardar**. La app comprueba que el token funciona y lo guarda en el
+`localStorage` de tu navegador, así que **no tendrás que volver a ponerlo al
+actualizar la app**. Desde Ajustes puedes cambiarlo o borrarlo cuando quieras.
+
+> El `localStorage` va por dirección: si abres la app en `http://localhost:8000` y
+> otro día en `http://127.0.0.1:8000`, o en otro navegador, te pedirá el token otra vez.
 
 > Alternativa: también puedes definir `TORBOX_API_KEY` en un archivo `.env`
-> (ver `.env.example`). Si hay un token guardado en Ajustes, tiene prioridad.
+> (ver `.env.example`). Si hay un token guardado en el navegador, tiene prioridad.
 
 ### Con Python (3.10+)
 
@@ -53,11 +56,10 @@ uvicorn app.main:app --port 8000
 
 El análisis y la escucha del audio usan ffmpeg, que **se instala automáticamente** con
 `pip install -r requirements.txt` (paquete `imageio-ffmpeg`, que trae ffmpeg ya
-compilado para Windows, macOS y Linux). En **⚙ Ajustes** verás «Usando el ffmpeg
-incluido con la app».
+compilado para Windows, macOS y Linux).
 
-Si ya tienes ffmpeg/ffprobe instalados en el sistema, la app los usa en su lugar.
-También puedes indicar la ruta de un `ffprobe` propio en Ajustes.
+Si ya tienes ffmpeg/ffprobe instalados en el sistema, la app los detecta y los usa
+en su lugar.
 
 ### Con Docker (incluye ffmpeg)
 
@@ -68,18 +70,20 @@ docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/data:/data" controltorbox
 
 ## Seguridad
 
-- El token se guarda sólo en tu equipo (`data/settings.json` o `.env`). La interfaz
-  nunca lo recibe completo: solo ve los últimos 4 caracteres.
+- El token se guarda en el `localStorage` de tu navegador y viaja solo entre tu
+  navegador y la app local (cabecera `X-Torbox-Token`). El servidor no lo guarda.
 - Por defecto `uvicorn` escucha en `127.0.0.1`. No expongas la app a Internet: no
   tiene autenticación y permite borrar contenido de tu cuenta.
 - Eliminar en TorBox es **irreversible**.
 
 ## Problemas frecuentes
 
-- **Error al guardar el token**: la app guarda los ajustes en la carpeta `data/` del
-  proyecto. Si no puede escribir ahí, usa `~/.controltorbox`. Puedes elegir otra
-  carpeta con `CONTROLTORBOX_DATA_DIR=/ruta`. El mensaje de error en pantalla y en la
-  consola de `uvicorn` indica la causa exacta.
+- **La app pide el token otra vez**: comprueba que abres la misma dirección
+  (`localhost` y `127.0.0.1` cuentan como sitios distintos) y que no estás en modo
+  incógnito.
+- **Carpeta de datos**: los análisis se guardan en `data/` dentro del proyecto (o en
+  `~/.controltorbox` si no se puede escribir ahí). Puedes cambiarla con
+  `CONTROLTORBOX_DATA_DIR=/ruta`.
 
 ## Tests
 

@@ -22,11 +22,35 @@ function banner(msg, kind = "error") {
   el.className = `banner ${kind}`;
 }
 
+// El token de TorBox se guarda en este navegador y se envía en cada petición.
+const TOKEN_STORAGE_KEY = "controltorbox.torboxToken";
+
+function getToken() {
+  try { return localStorage.getItem(TOKEN_STORAGE_KEY) || ""; } catch (_) { return ""; }
+}
+
+function setToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function authFetch(url, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  const token = getToken();
+  if (token) headers.set("X-Torbox-Token", token);
+  return fetch(url, { ...opts, headers });
+}
+
 async function api(path, body, method = "POST") {
   const opts = body
     ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
     : {};
-  const res = await fetch(path, opts);
+  const res = await authFetch(path, opts);
   return parseResponse(res);
 }
 
@@ -361,7 +385,7 @@ async function playTrack(n, btn) {
   btn.disabled = true;
   try {
     // Primero comprobamos que el servidor puede generar el fragmento para mostrar el error real.
-    const res = await fetch(url);
+    const res = await authFetch(url);
     if (!res.ok) await parseResponse(res);
     const blob = await res.blob();
     if (player.item !== it) return;
@@ -407,6 +431,12 @@ function settingsError(msg) {
   el.classList.toggle("hidden", !msg);
 }
 
+const SOURCE_LABEL = {
+  navegador: "guardado en este navegador",
+  ajustes: "guardado en el servidor (versión anterior)",
+  env: "desde .env",
+};
+
 async function openSettings() {
   settingsError(null);
   $("api-key").value = "";
@@ -416,52 +446,11 @@ async function openSettings() {
   try {
     const s = await api("/api/settings");
     $("api-key-current").textContent = s.api_key_configured
-      ? `Token actual: ${s.api_key_masked}` + (s.api_key_source === "env" ? " (desde .env)" : "")
+      ? `Token actual: ${s.api_key_masked} (${SOURCE_LABEL[s.api_key_source] || s.api_key_source})`
       : "No hay ningún token configurado.";
-    $("btn-clear-key").disabled = s.api_key_source !== "ajustes";
-    renderFfprobe(s);
+    $("btn-clear-key").disabled = !getToken() && s.api_key_source !== "ajustes";
   } catch (err) {
     settingsError(err.message);
-  }
-}
-
-function renderFfprobe(s) {
-  const status = $("ffprobe-status");
-  const help = $("ffprobe-help");
-  if (s.ffprobe_found || s.ffmpeg_found) {
-    const parts = [];
-    if (s.ffmpeg_bundled) parts.push("✓ Usando el ffmpeg incluido con la app");
-    else if (s.ffmpeg_found) parts.push(`✓ ffmpeg: ${s.ffmpeg_found}`);
-    if (s.ffprobe_found) parts.push(`✓ ffprobe: ${s.ffprobe_found}`);
-    if (!s.ffmpeg_found) parts.push("⚠ Sin ffmpeg no se puede escuchar el audio");
-    status.textContent = parts.join("\n");
-    status.className = "hint ok";
-    help.classList.add("hidden");
-  } else {
-    status.textContent = "✗ No se encuentra ffmpeg.";
-    status.className = "hint missing";
-    help.textContent = s.install_help;
-    help.classList.remove("hidden");
-  }
-  $("ffprobe-path").value = s.ffprobe_custom || "";
-}
-
-async function saveFfprobe() {
-  const btn = $("btn-save-ffprobe");
-  btn.disabled = true;
-  settingsError(null);
-  try {
-    const res = await fetch("/api/settings/ffprobe", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: $("ffprobe-path").value.trim() }),
-    });
-    renderFfprobe(await parseResponse(res));
-    await load();
-  } catch (err) {
-    settingsError(err.message);
-  } finally {
-    btn.disabled = false;
   }
 }
 
@@ -474,15 +463,13 @@ async function saveSettings(e) {
   btn.textContent = "Comprobando…";
   settingsError(null);
   try {
-    const res = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: key }),
-    });
-    await parseResponse(res);
+    await api("/api/settings", { api_key: key }, "PUT");  // valida el token contra TorBox
+    if (!setToken(key)) {
+      throw new Error("El navegador no permite guardar datos (¿modo incógnito?). El token no se recordará.");
+    }
     $("settings").close();
     await load();
-    banner("API token guardado correctamente.", "ok");
+    banner("API token guardado en este navegador.", "ok");
   } catch (err) {
     settingsError(err.message);
   } finally {
@@ -494,7 +481,8 @@ async function saveSettings(e) {
 async function clearKey() {
   if (!confirm("¿Borrar el API token guardado?")) return;
   try {
-    const res = await fetch("/api/settings/api_key", { method: "DELETE" });
+    setToken(null);
+    const res = await authFetch("/api/settings/api_key", { method: "DELETE" });
     if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
     $("settings").close();
     state.items = [];
@@ -510,10 +498,6 @@ $("btn-settings").addEventListener("click", openSettings);
 $("settings-form").addEventListener("submit", saveSettings);
 $("btn-clear-key").addEventListener("click", clearKey);
 $("btn-close-settings").addEventListener("click", () => $("settings").close());
-$("btn-save-ffprobe").addEventListener("click", saveFfprobe);
-$("ffprobe-path").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); saveFfprobe(); }
-});
 $("btn-toggle-key").addEventListener("click", () => {
   const i = $("api-key");
   i.type = i.type === "password" ? "text" : "password";

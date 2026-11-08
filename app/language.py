@@ -118,17 +118,6 @@ def normalize_ffprobe_path(path: str) -> Path:
     return p
 
 
-def check_ffprobe(path: str | Path) -> str:
-    """Ejecuta `ffprobe -version`; devuelve la primera línea o lanza error."""
-    try:
-        proc = subprocess.run([str(path), "-version"], capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"No se pudo ejecutar {path}: {exc}") from exc
-    if proc.returncode != 0:
-        raise RuntimeError(f"{path} no parece ffprobe: {proc.stderr.strip()[:200]}")
-    return (proc.stdout.splitlines() or [""])[0]
-
-
 def find_ffprobe(custom: str | None = None) -> str | None:
     """Localiza ffprobe: ruta configurada, FFPROBE_PATH, PATH o rutas típicas."""
     for path in (custom, os.environ.get("FFPROBE_PATH")):
