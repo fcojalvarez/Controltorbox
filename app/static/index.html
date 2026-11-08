@@ -22,6 +22,7 @@
     <div class="stat"><span id="stat-size">–</span><label>Ocupado</label></div>
     <div class="stat warn"><span id="stat-noes">–</span><label>Sin español</label></div>
     <div class="stat muted"><span id="stat-unknown">–</span><label>Desconocido</label></div>
+    <button type="button" id="stat-dup-btn" class="stat dup" title="Ver duplicados"><span id="stat-dup">–</span><label>Duplicados</label></button>
   </section>
 
   <section class="toolbar">
@@ -47,11 +48,13 @@
       <option value="name_asc">Nombre (A-Z)</option>
     </select>
     <label class="check"><input id="only-video" type="checkbox" checked> Solo vídeo</label>
+    <label class="check"><input id="only-dups" type="checkbox"> Solo duplicados</label>
     <button id="btn-reload" class="secondary">Recargar</button>
   </section>
 
   <section class="actions">
     <span id="selection-info">0 seleccionados</span>
+    <button id="btn-select-extra" class="secondary hidden" title="En cada grupo conserva la mejor copia (con español y, a igualdad, la más grande) y selecciona el resto">Seleccionar copias sobrantes</button>
     <button id="btn-analyze" class="secondary" disabled title="Lee las pistas de audio reales del archivo">Analizar audio</button>
     <button id="btn-delete" class="danger" disabled>Eliminar seleccionados</button>
   </section>

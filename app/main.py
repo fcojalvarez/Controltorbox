@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import language
+from .duplicates import find_duplicates
 from .torbox import DEFAULT_BASE_URL, KINDS, TorboxClient, TorboxError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -209,6 +210,7 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
         "size": raw.get("size") or sum((f.get("size") or 0) for f in files),
         "created_at": raw.get("created_at"),
         "state": raw.get("download_state") or ("completed" if raw.get("download_finished") else ""),
+        "hash": raw.get("hash") or "",
         "files": len(files),
         "file_list": sorted(
             (
@@ -342,6 +344,11 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
     def list_items(client=Depends(get_client)):
         items = _fetch_all(client)
         items.sort(key=lambda i: i["size"] or 0, reverse=True)
+        dups = find_duplicates(items)
+        for it in items:
+            d = dups.get(_key(it["kind"], it["id"]))
+            it["duplicate_group"] = d["group"] if d else None
+            it["duplicate_label"] = d["label"] if d else None
         return {"items": items}
 
     # -- análisis y escucha ------------------------------------------------

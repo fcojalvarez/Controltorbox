@@ -228,3 +228,23 @@ def test_items_include_file_list_and_date(tmp_path, monkeypatch):
     item = TestClient(app).get("/api/items").json()["items"][0]
     assert item["created_at"] == "2026-03-01T10:00:00Z"
     assert item["file_list"] == [{"name": "e2.mkv", "size": 20}, {"name": "e1.mkv", "size": 10}]
+
+
+def test_items_mark_duplicates(tmp_path, monkeypatch):
+    monkeypatch.setenv("TORBOX_API_KEY", "x")
+    torrents = [
+        {"id": 1, "name": "Dune.Part.Two.2024.2160p.WEB-DL", "size": 18, "files": []},
+        {"id": 2, "name": "Dune Part Two (2024) [1080p][Castellano]", "size": 9, "files": []},
+        {"id": 3, "name": "Oppenheimer.2023.1080p", "size": 14, "files": []},
+    ]
+    usenet = [{"id": 7, "name": "Oppenheimer (2023) [4K]", "size": 30, "files": []}]
+    def handler(r):
+        data = torrents if "torrents" in r.url.path else usenet if "usenet" in r.url.path else []
+        return httpx.Response(200, json={"success": True, "data": data})
+    transport = httpx.MockTransport(handler)
+    app = create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path)
+    items = {(i["kind"], i["id"]): i for i in TestClient(app).get("/api/items").json()["items"]}
+    assert items[("torrent", 1)]["duplicate_group"] == items[("torrent", 2)]["duplicate_group"] is not None
+    assert items[("torrent", 3)]["duplicate_group"] == items[("usenet", 7)]["duplicate_group"]  # entre tipos
+    assert items[("torrent", 1)]["duplicate_group"] != items[("torrent", 3)]["duplicate_group"]
+    assert items[("usenet", 7)]["duplicate_label"] == "Oppenheimer (2023)"

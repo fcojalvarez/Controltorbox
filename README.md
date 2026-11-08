@@ -8,6 +8,14 @@ audio en español** y te deja eliminarlos en bloque para liberar espacio.
 
 - Lista todo lo que tienes en TorBox (torrents, Usenet y web) ordenado por tamaño.
 - Filtros por idioma del audio, tipo, nombre y "solo vídeo".
+- **Buscador de duplicados** (tarjeta *Duplicados* o casilla *Solo duplicados*): agrupa
+  la misma película o serie aunque esté en distinta calidad, idioma o tipo (torrent,
+  Usenet, web). Compara el título normalizado y el año; en series, el mismo episodio o
+  un pack de temporada que ya lo incluye. El mismo torrent añadido dos veces (mismo
+  hash) también cuenta. *Seleccionar copias sobrantes* conserva en cada grupo la copia
+  con audio en español (o, si empatan, la más grande) y marca el resto para borrar.
+  Funciona por nombre: títulos en distinto idioma («Part Two» / «Parte Dos») no se
+  detectan como la misma película.
 - Ordenar por tamaño, fecha en que se añadió (más recientes o más antiguos) o nombre.
   La app recuerda el orden elegido.
 - Ver los archivos de cada torrent o descarga (desplegable «N archivos»), con su tamaño.

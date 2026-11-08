@@ -71,6 +71,17 @@ function visibleItems() {
   const audio = $("filter-audio").value;
   const kind = $("filter-kind").value;
   const onlyVideo = $("only-video").checked;
+  const onlyDups = $("only-dups").checked;
+  if (onlyDups) {
+    // En modo duplicados se muestran todas las copias, tengan el audio que tengan.
+    const dups = state.items.filter((it) => it.duplicate_group
+      && (!q || it.name.toLowerCase().includes(q) || (it.duplicate_label || "").toLowerCase().includes(q))
+      && (kind === "all" || it.kind === kind));
+    const sorted = sortItems(dups, $("sort").value);
+    const order = new Map();
+    for (const it of sortItems(dups, "size_desc")) if (!order.has(it.duplicate_group)) order.set(it.duplicate_group, order.size);
+    return sorted.sort((a, b) => order.get(a.duplicate_group) - order.get(b.duplicate_group));
+  }
   const items = state.items.filter((it) => {
     if (q && !it.name.toLowerCase().includes(q)) return false;
     if (kind !== "all" && it.kind !== kind) return false;
@@ -112,13 +123,32 @@ function render() {
   const tbody = $("rows");
   tbody.textContent = "";
 
+  const onlyDups = $("only-dups").checked;
+  $("btn-select-extra").classList.toggle("hidden", !onlyDups);
+  $("stat-dup-btn").classList.toggle("active", onlyDups);
+
   if (!items.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML = '<td colspan="5" class="empty">No hay elementos con estos filtros.</td>';
+    tr.innerHTML = `<td colspan="5" class="empty">${onlyDups ? "No se han encontrado duplicados." : "No hay elementos con estos filtros."}</td>`;
     tbody.appendChild(tr);
   }
 
+  let lastGroup = null;
   for (const it of items) {
+    if (onlyDups && it.duplicate_group !== lastGroup) {
+      lastGroup = it.duplicate_group;
+      const members = items.filter((x) => x.duplicate_group === lastGroup);
+      const gr = document.createElement("tr");
+      gr.className = "group-row";
+      const td = document.createElement("td");
+      td.colSpan = 5;
+      td.textContent = it.duplicate_label;
+      const small = document.createElement("small");
+      small.textContent = `${members.length} copias · ${fmtSize(members.reduce((a, x) => a + (x.size || 0), 0))}`;
+      td.appendChild(small);
+      gr.appendChild(td);
+      tbody.appendChild(gr);
+    }
     const tr = document.createElement("tr");
     const k = keyOf(it);
     if (state.selected.has(k)) tr.classList.add("selected");
@@ -137,6 +167,14 @@ function render() {
     const tdName = document.createElement("td");
     tdName.className = "name";
     tdName.textContent = it.name;
+    if (it.duplicate_group && !onlyDups) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Duplicado";
+      tag.title = `Hay otra copia de «${it.duplicate_label}». Pulsa para ver los duplicados.`;
+      tag.addEventListener("click", () => { $("only-dups").checked = true; render(); });
+      tdName.appendChild(tag);
+    }
     const meta = [];
     const t = itemTime(it);
     if (t !== null) meta.push(`Añadido el ${DATE_FMT.format(new Date(t))}`);
@@ -238,6 +276,33 @@ function updateStats() {
   $("stat-size").textContent = fmtSize(total);
   $("stat-noes").textContent = state.items.filter((i) => i.audio_status === "no_es").length;
   $("stat-unknown").textContent = state.items.filter((i) => i.audio_status === "unknown").length;
+  $("stat-dup").textContent = new Set(state.items.filter((i) => i.duplicate_group).map((i) => i.duplicate_group)).size;
+}
+
+// Mejor copia de un grupo: con audio en español y, a igualdad, la más grande.
+const AUDIO_RANK = { es: 2, unknown: 1, no_es: 0 };
+
+function selectExtraCopies() {
+  const groups = new Map();
+  for (const it of visibleItems()) {
+    if (!groups.has(it.duplicate_group)) groups.set(it.duplicate_group, []);
+    groups.get(it.duplicate_group).push(it);
+  }
+  let count = 0, size = 0;
+  for (const members of groups.values()) {
+    const ranked = [...members].sort((a, b) =>
+      (AUDIO_RANK[b.audio_status] ?? 1) - (AUDIO_RANK[a.audio_status] ?? 1) || (b.size || 0) - (a.size || 0));
+    state.selected.delete(keyOf(ranked[0]));
+    for (const it of ranked.slice(1)) {
+      state.selected.add(keyOf(it));
+      count++;
+      size += it.size || 0;
+    }
+  }
+  render();
+  banner(count
+    ? `Seleccionadas ${count} copias sobrantes (${fmtSize(size)}). En cada grupo se conserva la que tiene español o, si empatan, la más grande. Revísalo antes de eliminar.`
+    : "No hay copias sobrantes que seleccionar.", "info");
 }
 
 async function load() {
@@ -565,6 +630,9 @@ $("btn-toggle-key").addEventListener("click", () => {
 $("search").addEventListener("input", render);
 $("filter-audio").addEventListener("change", render);
 $("filter-kind").addEventListener("change", render);
+$("only-dups").addEventListener("change", render);
+$("stat-dup-btn").addEventListener("click", () => { $("only-dups").checked = !$("only-dups").checked; render(); });
+$("btn-select-extra").addEventListener("click", selectExtraCopies);
 try { $("sort").value = localStorage.getItem("controltorbox.sort") || "size_desc"; } catch (_) { /* sin storage */ }
 if (!$("sort").value) $("sort").value = "size_desc";
 $("sort").addEventListener("change", () => {
