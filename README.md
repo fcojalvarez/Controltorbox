@@ -12,7 +12,7 @@ audio en español** y te deja eliminarlos en bloque para liberar espacio.
   1. **Por nombre** (instantáneo): busca marcas como `Castellano`, `Spanish`,
      `Latino`, `SPA`, `ESP`… y `VOSE`/`VOS` (versión original subtitulada = sin audio
      en español). Si no hay ninguna marca queda como **Desconocido**.
-  2. **Análisis real con ffprobe** (botón *Analizar audio*): pide a TorBox el enlace del
+  2. **Análisis real con ffmpeg** (botón *Analizar audio*): pide a TorBox el enlace del
      vídeo principal y lee sólo las cabeceras del archivo para obtener las pistas de
      audio reales (`eng`, `spa`, …). No descarga el archivo completo. El resultado se
      guarda en `data/analysis.json` para no repetirlo.
@@ -49,23 +49,15 @@ pip install -r requirements.txt
 uvicorn app.main:app --port 8000
 ```
 
-#### ffmpeg / ffprobe (recomendado)
+#### ffmpeg (no hay que instalar nada aparte)
 
-Para **Analizar audio** hace falta `ffprobe` y para **▶ Escuchar** hace falta `ffmpeg`;
-los dos vienen en el mismo paquete:
+El análisis y la escucha del audio usan ffmpeg, que **se instala automáticamente** con
+`pip install -r requirements.txt` (paquete `imageio-ffmpeg`, que trae ffmpeg ya
+compilado para Windows, macOS y Linux). En **⚙ Ajustes** verás «Usando el ffmpeg
+incluido con la app».
 
-| Sistema | Instalación |
-|---|---|
-| Windows | `winget install Gyan.FFmpeg` en PowerShell, o descarga el zip de gyan.dev y extráelo en `C:\ffmpeg` |
-| macOS | `brew install ffmpeg` |
-| Debian/Ubuntu | `sudo apt install ffmpeg` |
-
-La app lo busca sola en el PATH y en las rutas habituales de esos instaladores
-(winget, `C:\ffmpeg\bin`, Chocolatey, Scoop, Homebrew…), así que normalmente basta con
-pulsar **Recargar** después de instalarlo. Si no lo encuentra, abre **⚙ Ajustes** y
-pega la ruta de `ffprobe.exe` o de su carpeta `bin`.
-
-Abre http://localhost:8000
+Si ya tienes ffmpeg/ffprobe instalados en el sistema, la app los usa en su lugar.
+También puedes indicar la ruta de un `ffprobe` propio en Ajustes.
 
 ### Con Docker (incluye ffmpeg)
 

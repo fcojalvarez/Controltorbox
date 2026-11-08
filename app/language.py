@@ -149,8 +149,19 @@ def ffprobe_available(custom: str | None = None) -> bool:
     return find_ffprobe(custom) is not None
 
 
+def bundled_ffmpeg() -> str | None:
+    """ffmpeg incluido con la app (paquete pip imageio-ffmpeg), si está."""
+    try:
+        import imageio_ffmpeg  # noqa: PLC0415
+
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # noqa: BLE001 - paquete ausente o sin binario para este sistema
+        return None
+    return exe if exe and Path(exe).is_file() else None
+
+
 def find_ffmpeg(ffprobe_path: str | None = None) -> str | None:
-    """Localiza ffmpeg: junto a ffprobe, en el PATH o en las rutas típicas."""
+    """Localiza ffmpeg: junto a ffprobe, en el PATH, rutas típicas o el incluido."""
     exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
     if ffprobe_path:
         sibling = Path(ffprobe_path).with_name(exe)
@@ -163,7 +174,87 @@ def find_ffmpeg(ffprobe_path: str | None = None) -> str | None:
         cand = p.with_name(exe)
         if cand.is_file():
             return str(cand)
-    return None
+    return bundled_ffmpeg()
+
+
+_STREAM_RE = re.compile(
+    r"^\s*Stream #\d+:\d+(?:\[[^\]]*\])?(?:\((?P<lang>[^)]*)\))?(?:\[[^\]]*\])?:\s*(?P<type>\w+):\s*(?P<rest>.*)$"
+)
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_LAYOUTS = {"mono": 1, "stereo": 2, "2.1": 3, "quad": 4, "4.0": 4, "5.0": 5, "5.1": 6, "6.1": 7, "7.1": 8}
+
+
+def parse_ffmpeg_info(text: str) -> dict:
+    """Interpreta la salida de `ffmpeg -i` (cuando no hay ffprobe)."""
+    tracks: list[dict] = []
+    duration = None
+    current: dict | None = None
+    in_meta = False
+    for line in text.splitlines():
+        m = _DURATION_RE.search(line)
+        if m and duration is None:
+            h, mi, se = m.groups()
+            duration = int(h) * 3600 + int(mi) * 60 + float(se)
+            continue
+        m = _STREAM_RE.match(line)
+        if m:
+            current, in_meta = None, False
+            if m.group("type").lower() == "audio":
+                rest = m.group("rest")
+                codec = rest.split(",")[0].split()[0] if rest else ""
+                layout = (rest.split(",")[2].strip() if rest.count(",") >= 2 else "").split("(")[0]
+                channels = _LAYOUTS.get(layout)
+                if channels is None:
+                    cm = re.match(r"(\d+) channels", layout)
+                    channels = int(cm.group(1)) if cm else None
+                current = {
+                    "n": len(tracks), "language": (m.group("lang") or "").strip(),
+                    "title": "", "codec": codec, "channels": channels,
+                }
+                tracks.append(current)
+            continue
+        if current is not None:
+            if line.strip() == "Metadata:":
+                in_meta = True
+            elif in_meta and ":" in line:
+                key, _, value = line.partition(":")
+                if key.strip().lower() == "title":
+                    current["title"] = value.strip()
+            elif not line.startswith("      "):
+                current, in_meta = None, False
+    for t in tracks:
+        lang = t["language"]
+        if (not lang or lang.lower() in UNDEFINED_CODES) and t["title"] and guess_from_name(t["title"]) == ES:
+            lang = "spa"
+        t["language"] = lang or "und"
+    return {"duration": duration, "tracks": tracks}
+
+
+def probe_media_ffmpeg(url: str, ffmpeg: str = "ffmpeg", timeout: int = 60) -> dict:
+    """Lee las pistas con `ffmpeg -i` (sale con error a propósito: no hay salida)."""
+    proc = subprocess.run(
+        [ffmpeg, "-hide_banner", "-nostdin", "-i", url],
+        capture_output=True, timeout=timeout,
+    )
+    text = proc.stderr.decode("utf-8", "replace")
+    if "Input #0" not in text:
+        raise RuntimeError(text.strip()[-400:] or "ffmpeg no pudo abrir el archivo")
+    return parse_ffmpeg_info(text)
+
+
+def find_tools(ffprobe_custom: str | None = None) -> dict:
+    """Herramientas disponibles: {'ffprobe': ruta|None, 'ffmpeg': ruta|None}."""
+    ffprobe = find_ffprobe(ffprobe_custom)
+    return {"ffprobe": ffprobe, "ffmpeg": find_ffmpeg(ffprobe)}
+
+
+def probe_with(tools: dict, url: str) -> dict:
+    """Analiza con ffprobe si existe; si no, con ffmpeg."""
+    if tools.get("ffprobe"):
+        return probe_media(url, tools["ffprobe"])
+    if tools.get("ffmpeg"):
+        return probe_media_ffmpeg(url, tools["ffmpeg"])
+    raise RuntimeError("No se encuentra ffmpeg")
 
 
 def probe_media(url: str, ffprobe: str = "ffprobe", timeout: int = 60) -> dict:

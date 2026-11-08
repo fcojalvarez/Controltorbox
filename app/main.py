@@ -72,7 +72,7 @@ def _load_dotenv(path: Path | None = None) -> None:
 
 
 class AnalysisCache:
-    """Guarda en disco el resultado del análisis con ffprobe."""
+    """Guarda en disco el resultado del análisis de las pistas de audio."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -187,9 +187,9 @@ class FfprobeRequest(BaseModel):
 
 
 INSTALL_HELP = {
-    "Windows": "Abre PowerShell y ejecuta: winget install Gyan.FFmpeg  (o descarga ffmpeg de gyan.dev y extráelo en C:\\ffmpeg)",
-    "Darwin": "En Terminal: brew install ffmpeg",
-    "Linux": "En la terminal: sudo apt install ffmpeg  (o el gestor de paquetes de tu distribución)",
+    "Windows": "ffmpeg se instala solo con la app: ejecuta «pip install -r requirements.txt» y reinicia. Si aun así no aparece, en PowerShell: winget install Gyan.FFmpeg",
+    "Darwin": "ffmpeg se instala solo con la app: ejecuta «pip install -r requirements.txt» y reinicia. Alternativa: brew install ffmpeg",
+    "Linux": "ffmpeg se instala solo con la app: ejecuta «pip install -r requirements.txt» y reinicia. Alternativa: sudo apt install ffmpeg",
 }
 
 
@@ -295,14 +295,20 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         return {
             "api_key_configured": bool(key),
             "api_key_source": source,
-            "ffprobe": language.ffprobe_available(settings.get("ffprobe_path")),
+            # True si se puede analizar (con ffprobe o, si no, con ffmpeg)
+            "ffprobe": any(tools().values()),
         }
+
+    def tools() -> dict:
+        return language.find_tools(settings.get("ffprobe_path"))
 
     def ffprobe_info() -> dict:
         custom = settings.get("ffprobe_path") or ""
-        found = language.find_ffprobe(custom)
+        t = tools()
         return {
-            "ffprobe_found": found or "",
+            "ffprobe_found": t["ffprobe"] or "",
+            "ffmpeg_found": t["ffmpeg"] or "",
+            "ffmpeg_bundled": bool(t["ffmpeg"]) and t["ffmpeg"] == language.bundled_ffmpeg(),
             "ffprobe_custom": custom,
             "install_help": INSTALL_HELP.get(platform.system(), INSTALL_HELP["Linux"]),
         }
@@ -378,12 +384,12 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         links[k] = (now, url)
         return url
 
-    def probe_item(client, ffprobe: str, kind: str, raw: dict) -> dict:
+    def probe_item(client, tl: dict, kind: str, raw: dict) -> dict:
         main = language.pick_main_video(raw.get("files") or [])
         if main is None:
             result = {"status": language.UNKNOWN, "languages": [], "tracks": [], "error": "Sin archivo de vídeo"}
         else:
-            info = language.probe_media(link_for(client, kind, raw["id"], main["id"]), ffprobe)
+            info = language.probe_with(tl, link_for(client, kind, raw["id"], main["id"]))
             langs = [t["language"] for t in info["tracks"]]
             result = {
                 "status": language.classify_audio_languages(langs),
@@ -404,14 +410,14 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=502, detail=str(exc))
         raise HTTPException(status_code=404, detail="No encontrado en TorBox")
 
-    def require_ffprobe() -> str:
-        ffprobe = language.find_ffprobe(settings.get("ffprobe_path"))
-        if not ffprobe:
+    def require_tools() -> dict:
+        tl = tools()
+        if not any(tl.values()):
             raise HTTPException(
                 status_code=400,
-                detail="No se encuentra ffprobe. Instala ffmpeg o indica su ruta en ⚙ Ajustes.",
+                detail="No se encuentra ffmpeg. Ejecuta «pip install -r requirements.txt» (lo instala solo) y reinicia la app.",
             )
-        return ffprobe
+        return tl
 
     @app.get("/api/items/{kind}/{item_id}/tracks")
     def item_tracks(kind: str, item_id: int, client=Depends(get_client)):
@@ -419,10 +425,10 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Tipo desconocido")
         entry = cache.get(_key(kind, item_id)) or {}
         if "tracks" not in entry:
-            ffprobe = require_ffprobe()
+            tl = require_tools()
             raw = find_raw(client, kind, item_id)
             try:
-                probe_item(client, ffprobe, kind, raw)
+                probe_item(client, tl, kind, raw)
             except TorboxError as exc:
                 raise HTTPException(status_code=502, detail=str(exc))
             except Exception as exc:  # noqa: BLE001
@@ -434,7 +440,7 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             "status": entry.get("status"),
             "manual": entry.get("manual"),
             "error": entry.get("error"),
-            "can_play": language.find_ffmpeg(language.find_ffprobe(settings.get("ffprobe_path"))) is not None,
+            "can_play": tools()["ffmpeg"] is not None,
         }
 
     @app.get("/api/items/{kind}/{item_id}/clip")
@@ -447,7 +453,7 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
     ):
         if kind not in KINDS:
             raise HTTPException(status_code=404, detail="Tipo desconocido")
-        ffmpeg = language.find_ffmpeg(language.find_ffprobe(settings.get("ffprobe_path")))
+        ffmpeg = tools()["ffmpeg"]
         if not ffmpeg:
             raise HTTPException(status_code=400, detail="No se encuentra ffmpeg (necesario para escuchar el audio).")
         ck = (kind, item_id, track, round(start), round(duration))
@@ -478,7 +484,7 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/analyze")
     def analyze(req: ItemsRequest, client=Depends(get_client)):
-        ffprobe = require_ffprobe()
+        tl = require_tools()
         wanted = {_key(r.kind, r.id) for r in req.items}
         raws = {}
         for kind in {r.kind for r in req.items}:
@@ -495,7 +501,7 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
                 return {"key": key, "error": "No encontrado en TorBox"}
             kind, raw = raws[key]
             try:
-                result = probe_item(client, ffprobe, kind, raw)
+                result = probe_item(client, tl, kind, raw)
             except Exception as exc:  # noqa: BLE001 - se informa al usuario
                 return {"key": key, "error": str(exc)[:300]}
             return {"key": key, **result}

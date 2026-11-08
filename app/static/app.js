@@ -170,7 +170,7 @@ async function load() {
       return;
     }
     if (!st.ffprobe) {
-      banner("No se encuentra ffprobe (parte de ffmpeg): el idioma solo se estima por el nombre. Instala ffmpeg o indica su ruta en ⚙ Ajustes para analizar las pistas reales.", "info");
+      banner("No se encuentra ffmpeg: el idioma solo se estima por el nombre. Ejecuta «pip install -r requirements.txt» (lo instala automáticamente) y reinicia la app.", "info");
     }
     const data = await api("/api/items");
     state.items = data.items;
@@ -428,14 +428,19 @@ async function openSettings() {
 function renderFfprobe(s) {
   const status = $("ffprobe-status");
   const help = $("ffprobe-help");
-  if (s.ffprobe_found) {
-    status.textContent = `✓ Encontrado: ${s.ffprobe_found}`;
+  if (s.ffprobe_found || s.ffmpeg_found) {
+    const parts = [];
+    if (s.ffmpeg_bundled) parts.push("✓ Usando el ffmpeg incluido con la app");
+    else if (s.ffmpeg_found) parts.push(`✓ ffmpeg: ${s.ffmpeg_found}`);
+    if (s.ffprobe_found) parts.push(`✓ ffprobe: ${s.ffprobe_found}`);
+    if (!s.ffmpeg_found) parts.push("⚠ Sin ffmpeg no se puede escuchar el audio");
+    status.textContent = parts.join("\n");
     status.className = "hint ok";
     help.classList.add("hidden");
   } else {
-    status.textContent = "✗ No se encuentra ffprobe en este equipo.";
+    status.textContent = "✗ No se encuentra ffmpeg.";
     status.className = "hint missing";
-    help.textContent = `Para instalarlo: ${s.install_help}. Después pulsa «Recargar» o, si ya lo tienes, pega aquí su ruta.`;
+    help.textContent = s.install_help;
     help.classList.remove("hidden");
   }
   $("ffprobe-path").value = s.ffprobe_custom || "";
