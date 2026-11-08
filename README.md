@@ -38,10 +38,23 @@ puedes cambiarlo o borrarlo cuando quieras.
 
 ```bash
 pip install -r requirements.txt
-# opcional pero recomendado para el análisis real del audio:
-#   Windows: winget install ffmpeg   ·  macOS: brew install ffmpeg  ·  Debian/Ubuntu: sudo apt install ffmpeg
 uvicorn app.main:app --port 8000
 ```
+
+#### ffmpeg / ffprobe (recomendado)
+
+Para el botón **Analizar audio** hace falta `ffprobe`, que viene con ffmpeg:
+
+| Sistema | Instalación |
+|---|---|
+| Windows | `winget install Gyan.FFmpeg` en PowerShell, o descarga el zip de gyan.dev y extráelo en `C:\ffmpeg` |
+| macOS | `brew install ffmpeg` |
+| Debian/Ubuntu | `sudo apt install ffmpeg` |
+
+La app lo busca sola en el PATH y en las rutas habituales de esos instaladores
+(winget, `C:\ffmpeg\bin`, Chocolatey, Scoop, Homebrew…), así que normalmente basta con
+pulsar **Recargar** después de instalarlo. Si no lo encuentra, abre **⚙ Ajustes** y
+pega la ruta de `ffprobe.exe` o de su carpeta `bin`.
 
 Abre http://localhost:8000
 

@@ -159,7 +159,7 @@ async function load() {
       return;
     }
     if (!st.ffprobe) {
-      banner("ffprobe no está instalado: el idioma solo se estima por el nombre. Instala ffmpeg para analizar las pistas reales.", "info");
+      banner("No se encuentra ffprobe (parte de ffmpeg): el idioma solo se estima por el nombre. Instala ffmpeg o indica su ruta en ⚙ Ajustes para analizar las pistas reales.", "info");
     }
     const data = await api("/api/items");
     state.items = data.items;
@@ -255,8 +255,44 @@ async function openSettings() {
       ? `Token actual: ${s.api_key_masked}` + (s.api_key_source === "env" ? " (desde .env)" : "")
       : "No hay ningún token configurado.";
     $("btn-clear-key").disabled = s.api_key_source !== "ajustes";
+    renderFfprobe(s);
   } catch (err) {
     settingsError(err.message);
+  }
+}
+
+function renderFfprobe(s) {
+  const status = $("ffprobe-status");
+  const help = $("ffprobe-help");
+  if (s.ffprobe_found) {
+    status.textContent = `✓ Encontrado: ${s.ffprobe_found}`;
+    status.className = "hint ok";
+    help.classList.add("hidden");
+  } else {
+    status.textContent = "✗ No se encuentra ffprobe en este equipo.";
+    status.className = "hint missing";
+    help.textContent = `Para instalarlo: ${s.install_help}. Después pulsa «Recargar» o, si ya lo tienes, pega aquí su ruta.`;
+    help.classList.remove("hidden");
+  }
+  $("ffprobe-path").value = s.ffprobe_custom || "";
+}
+
+async function saveFfprobe() {
+  const btn = $("btn-save-ffprobe");
+  btn.disabled = true;
+  settingsError(null);
+  try {
+    const res = await fetch("/api/settings/ffprobe", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: $("ffprobe-path").value.trim() }),
+    });
+    renderFfprobe(await parseResponse(res));
+    await load();
+  } catch (err) {
+    settingsError(err.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -305,6 +341,10 @@ $("btn-settings").addEventListener("click", openSettings);
 $("settings-form").addEventListener("submit", saveSettings);
 $("btn-clear-key").addEventListener("click", clearKey);
 $("btn-close-settings").addEventListener("click", () => $("settings").close());
+$("btn-save-ffprobe").addEventListener("click", saveFfprobe);
+$("ffprobe-path").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); saveFfprobe(); }
+});
 $("btn-toggle-key").addEventListener("click", () => {
   const i = $("api-key");
   i.type = i.type === "password" ? "text" : "password";

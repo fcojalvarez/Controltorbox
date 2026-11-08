@@ -36,3 +36,16 @@ def test_pick_main_video():
     ]
     assert L.pick_main_video(files)["id"] == 2
     assert L.pick_main_video([{"id": 1, "name": "x.txt"}]) is None
+
+
+def test_find_ffprobe_uses_custom_then_candidates(tmp_path, monkeypatch):
+    exe = tmp_path / "bin" / "ffprobe"
+    exe.parent.mkdir()
+    exe.write_text("")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.delenv("FFPROBE_PATH", raising=False)
+    monkeypatch.setattr(L, "_candidate_paths", lambda: [])
+    assert L.find_ffprobe() is None
+    assert L.find_ffprobe(str(exe.parent)) == str(exe)  # carpeta -> ejecutable
+    monkeypatch.setattr(L, "_candidate_paths", lambda: [exe])
+    assert L.find_ffprobe() == str(exe)

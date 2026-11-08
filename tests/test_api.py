@@ -72,9 +72,9 @@ def test_delete_rejects_bad_kind(setup):
 def test_analyze_uses_cache(setup, monkeypatch):
     client, _ = setup
     from app import language
-    monkeypatch.setattr(language, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(language, "find_ffprobe", lambda custom=None: "/x/ffprobe")
     monkeypatch.setattr(TorboxClient, "download_link", lambda self, k, i, f: "http://x/file.mkv")
-    monkeypatch.setattr(language, "probe_audio_languages", lambda url: ["eng", "jpn"])
+    monkeypatch.setattr(language, "probe_audio_languages", lambda url, ffprobe: ["eng", "jpn"] if ffprobe == "/x/ffprobe" else [])
     r = client.post("/api/analyze", json={"items": [{"kind": "torrent", "id": 1}]})
     assert r.json()["results"][0]["status"] == "no_es"
     item = next(i for i in client.get("/api/items").json()["items"] if i["id"] == 1)
@@ -149,3 +149,28 @@ def test_default_data_dir_is_project_dir(monkeypatch, tmp_path):
     monkeypatch.delenv("CONTROLTORBOX_DATA_DIR", raising=False)
     monkeypatch.chdir(tmp_path)
     assert main.resolve_data_dir() == main.PROJECT_DIR / "data"
+
+
+def test_ffprobe_setting(setup, tmp_path, monkeypatch):
+    client, _ = setup
+    import shutil
+    real = shutil.which("ffprobe")
+    if not real:
+        pytest.skip("ffprobe no instalado")
+    # Una ruta que no existe se rechaza
+    r = client.put("/api/settings/ffprobe", json={"path": str(tmp_path / "nope")})
+    assert r.status_code == 400
+    # Un ejecutable que no es ffprobe se rechaza
+    fake = tmp_path / "ffprobe"
+    fake.write_text("#!/bin/sh\nexit 1\n"); fake.chmod(0o755)
+    assert client.put("/api/settings/ffprobe", json={"path": str(fake)}).status_code == 400
+    # Se acepta la carpeta que lo contiene y queda guardado
+    from pathlib import Path
+    r = client.put("/api/settings/ffprobe", json={"path": str(Path(real).parent)})
+    assert r.status_code == 200 and r.json()["ffprobe_custom"] == real
+    # Sin PATH sigue encontrándolo gracias a la ruta guardada
+    monkeypatch.setenv("PATH", "")
+    assert client.get("/api/status").json()["ffprobe"] is True
+    # Vacío -> detección automática
+    r = client.put("/api/settings/ffprobe", json={"path": ""})
+    assert r.json()["ffprobe_custom"] == ""

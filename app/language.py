@@ -8,9 +8,11 @@ Dos niveles:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 ES = "es"            # tiene audio en español
 NO_ES = "no_es"      # no tiene audio en español
@@ -80,18 +82,81 @@ def classify_audio_languages(languages: list[str]) -> str:
     return NO_ES
 
 
-def ffprobe_available() -> bool:
-    return shutil.which("ffprobe") is not None
+def _exe_name() -> str:
+    return "ffprobe.exe" if os.name == "nt" else "ffprobe"
 
 
-def probe_audio_languages(url: str, timeout: int = 60) -> list[str]:
+def _candidate_paths() -> list[Path]:
+    """Rutas típicas donde los instaladores dejan ffprobe."""
+    home = Path.home()
+    cands: list[Path] = []
+    if os.name == "nt":
+        local = Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local"))
+        cands += [
+            local / "Microsoft" / "WinGet" / "Links" / "ffprobe.exe",
+            Path("C:/ffmpeg/bin/ffprobe.exe"),
+            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "ffmpeg" / "bin" / "ffprobe.exe",
+            Path(os.environ.get("ProgramData", "C:/ProgramData")) / "chocolatey" / "bin" / "ffprobe.exe",
+            home / "scoop" / "shims" / "ffprobe.exe",
+        ]
+        # winget (Gyan.FFmpeg) sin el enlace en PATH
+        packages = local / "Microsoft" / "WinGet" / "Packages"
+        if packages.is_dir():
+            cands += sorted(packages.glob("*FFmpeg*/*/bin/ffprobe.exe"), reverse=True)
+    else:
+        cands += [Path(p) / "ffprobe" for p in (
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/snap/bin", str(home / ".local" / "bin"),
+        )]
+    return cands
+
+
+def normalize_ffprobe_path(path: str) -> Path:
+    """Acepta la ruta al ejecutable o a la carpeta que lo contiene."""
+    p = Path(path.strip().strip('"').strip("'")).expanduser()
+    if p.is_dir():
+        p = p / _exe_name()
+    return p
+
+
+def check_ffprobe(path: str | Path) -> str:
+    """Ejecuta `ffprobe -version`; devuelve la primera línea o lanza error."""
+    try:
+        proc = subprocess.run([str(path), "-version"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"No se pudo ejecutar {path}: {exc}") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"{path} no parece ffprobe: {proc.stderr.strip()[:200]}")
+    return (proc.stdout.splitlines() or [""])[0]
+
+
+def find_ffprobe(custom: str | None = None) -> str | None:
+    """Localiza ffprobe: ruta configurada, FFPROBE_PATH, PATH o rutas típicas."""
+    for path in (custom, os.environ.get("FFPROBE_PATH")):
+        if path:
+            p = normalize_ffprobe_path(path)
+            if p.is_file():
+                return str(p)
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    for p in _candidate_paths():
+        if p.is_file():
+            return str(p)
+    return None
+
+
+def ffprobe_available(custom: str | None = None) -> bool:
+    return find_ffprobe(custom) is not None
+
+
+def probe_audio_languages(url: str, ffprobe: str = "ffprobe", timeout: int = 60) -> list[str]:
     """Usa ffprobe para leer las pistas de audio de una URL remota.
 
     Si una pista no tiene etiqueta de idioma pero su título menciona
     el idioma (p.ej. "Castellano AC3 5.1"), se usa el título.
     """
     cmd = [
-        "ffprobe", "-v", "error",
+        ffprobe, "-v", "error",
         "-select_streams", "a",
         "-show_entries", "stream=index:stream_tags=language,title",
         "-of", "json", url,

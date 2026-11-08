@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -159,6 +160,17 @@ class SettingsRequest(BaseModel):
     api_key: str = Field(min_length=1, max_length=512)
 
 
+class FfprobeRequest(BaseModel):
+    path: str = Field(default="", max_length=1024)
+
+
+INSTALL_HELP = {
+    "Windows": "Abre PowerShell y ejecuta: winget install Gyan.FFmpeg  (o descarga ffmpeg de gyan.dev y extráelo en C:\\ffmpeg)",
+    "Darwin": "En Terminal: brew install ffmpeg",
+    "Linux": "En la terminal: sudo apt install ffmpeg  (o el gestor de paquetes de tu distribución)",
+}
+
+
 # ---------------------------------------------------------------------------
 # Lógica
 # ---------------------------------------------------------------------------
@@ -258,13 +270,43 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         return {
             "api_key_configured": bool(key),
             "api_key_source": source,
-            "ffprobe": language.ffprobe_available(),
+            "ffprobe": language.ffprobe_available(settings.get("ffprobe_path")),
+        }
+
+    def ffprobe_info() -> dict:
+        custom = settings.get("ffprobe_path") or ""
+        found = language.find_ffprobe(custom)
+        return {
+            "ffprobe_found": found or "",
+            "ffprobe_custom": custom,
+            "install_help": INSTALL_HELP.get(platform.system(), INSTALL_HELP["Linux"]),
         }
 
     @app.get("/api/settings")
     def get_settings():
         key, source = current_api_key()
-        return {"api_key_configured": bool(key), "api_key_masked": mask_key(key), "api_key_source": source}
+        return {
+            "api_key_configured": bool(key),
+            "api_key_masked": mask_key(key),
+            "api_key_source": source,
+            **ffprobe_info(),
+        }
+
+    @app.put("/api/settings/ffprobe")
+    def save_ffprobe(req: FfprobeRequest):
+        raw = req.path.strip()
+        if not raw:
+            settings.set("ffprobe_path", None)  # volver a la detección automática
+            return get_settings()
+        path = language.normalize_ffprobe_path(raw)
+        if not path.is_file():
+            raise HTTPException(status_code=400, detail=f"No existe el archivo {path}")
+        try:
+            language.check_ffprobe(path)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        settings.set("ffprobe_path", str(path))
+        return get_settings()
 
     @app.put("/api/settings")
     def save_settings(req: SettingsRequest):
@@ -298,10 +340,11 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/analyze")
     def analyze(req: ItemsRequest, client=Depends(get_client)):
-        if not language.ffprobe_available():
+        ffprobe = language.find_ffprobe(settings.get("ffprobe_path"))
+        if not ffprobe:
             raise HTTPException(
                 status_code=400,
-                detail="ffprobe no está instalado. Instala ffmpeg para analizar las pistas de audio.",
+                detail="No se encuentra ffprobe. Instala ffmpeg o indica su ruta en ⚙ Ajustes.",
             )
         wanted = {_key(r.kind, r.id) for r in req.items}
         raws = {}
@@ -324,7 +367,7 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             else:
                 try:
                     url = client.download_link(kind, raw["id"], main["id"])
-                    langs = language.probe_audio_languages(url)
+                    langs = language.probe_audio_languages(url, ffprobe)
                     result = {"status": language.classify_audio_languages(langs), "languages": langs, "error": None}
                 except Exception as exc:  # noqa: BLE001 - se informa al usuario
                     return {"key": key, "error": str(exc)[:300]}
