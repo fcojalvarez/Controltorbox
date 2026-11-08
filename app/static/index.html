@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controltorbox</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Controltorbox</h1>
+    <p class="sub">Gestiona tu almacenamiento de TorBox y elimina lo que no tiene audio en español.</p>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <section class="summary">
+    <div class="stat"><span id="stat-total">–</span><label>Elementos</label></div>
+    <div class="stat"><span id="stat-size">–</span><label>Ocupado</label></div>
+    <div class="stat warn"><span id="stat-noes">–</span><label>Sin español</label></div>
+    <div class="stat muted"><span id="stat-unknown">–</span><label>Desconocido</label></div>
+  </section>
+
+  <section class="toolbar">
+    <input id="search" type="search" placeholder="Buscar por nombre…">
+    <select id="filter-audio">
+      <option value="all">Todo el audio</option>
+      <option value="not_es" selected>Sin español (incluye desconocido)</option>
+      <option value="no_es">Sin español (confirmado)</option>
+      <option value="unknown">Desconocido</option>
+      <option value="es">Con español</option>
+    </select>
+    <select id="filter-kind">
+      <option value="all">Todos los tipos</option>
+      <option value="torrent">Torrents</option>
+      <option value="usenet">Usenet</option>
+      <option value="webdl">Web</option>
+    </select>
+    <label class="check"><input id="only-video" type="checkbox" checked> Solo vídeo</label>
+    <button id="btn-reload" class="secondary">Recargar</button>
+  </section>
+
+  <section class="actions">
+    <span id="selection-info">0 seleccionados</span>
+    <button id="btn-analyze" class="secondary" disabled title="Lee las pistas de audio reales con ffprobe">Analizar audio</button>
+    <button id="btn-delete" class="danger" disabled>Eliminar seleccionados</button>
+  </section>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th><input id="select-all" type="checkbox" title="Seleccionar visibles"></th>
+          <th>Nombre</th>
+          <th>Tipo</th>
+          <th class="num">Tamaño</th>
+          <th>Audio</th>
+        </tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="5" class="empty">Cargando…</td></tr></tbody>
+    </table>
+  </div>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <h2>¿Eliminar de TorBox?</h2>
+      <p id="confirm-text"></p>
+      <ul id="confirm-list"></ul>
+      <p class="warn-text">Esta acción no se puede deshacer.</p>
+      <menu>
+        <button value="cancel" class="secondary">Cancelar</button>
+        <button value="ok" class="danger">Eliminar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
