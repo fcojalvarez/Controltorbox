@@ -1,6 +1,7 @@
 """Controltorbox: gestiona y limpia tu almacenamiento de TorBox."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,37 @@ from .torbox import DEFAULT_BASE_URL, KINDS, TorboxClient, TorboxError
 STATIC_DIR = Path(__file__).parent / "static"
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 log = logging.getLogger("controltorbox")
+
+
+def static_version() -> str:
+    """Huella de los archivos de la interfaz: cambia en cuanto cambia alguno."""
+    h = hashlib.sha1()
+    for path in sorted(STATIC_DIR.iterdir()):
+        if path.is_file():
+            h.update(path.name.encode())
+            h.update(path.read_bytes())
+    return h.hexdigest()[:10]
+
+
+def app_version() -> str:
+    """Commit de git en uso (si la app se descargó con git) para mostrarlo en pantalla."""
+    git = PROJECT_DIR / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if head.startswith("ref: "):
+            ref = head[5:]
+            ref_file = git / ref
+            if ref_file.exists():
+                return ref_file.read_text(encoding="utf-8").strip()[:7]
+            packed = git / "packed-refs"
+            if packed.exists():
+                for line in packed.read_text(encoding="utf-8").splitlines():
+                    if line.endswith(" " + ref):
+                        return line[:7]
+            return "desconocida"
+        return head[:7]
+    except OSError:
+        return static_version()[:7]
 
 
 class StorageError(RuntimeError):
@@ -506,7 +538,14 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        # Se sirve sin caché y con los recursos versionados, para que tras
+        # actualizar la app el navegador nunca muestre la versión anterior.
+        version = static_version()
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        html = html.replace("/static/style.css", f"/static/style.css?v={version}")
+        html = html.replace("/static/app.js", f"/static/app.js?v={version}")
+        html = html.replace("{{APP_VERSION}}", app_version())
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

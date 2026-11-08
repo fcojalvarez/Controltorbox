@@ -248,3 +248,13 @@ def test_items_mark_duplicates(tmp_path, monkeypatch):
     assert items[("torrent", 3)]["duplicate_group"] == items[("usenet", 7)]["duplicate_group"]  # entre tipos
     assert items[("torrent", 1)]["duplicate_group"] != items[("torrent", 3)]["duplicate_group"]
     assert items[("usenet", 7)]["duplicate_label"] == "Oppenheimer (2023)"
+
+
+def test_index_is_not_cached_and_assets_are_versioned(setup):
+    client, _ = setup
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-store"
+    assert "/static/app.js?v=" in r.text and "/static/style.css?v=" in r.text
+    assert "{{APP_VERSION}}" not in r.text and "versión" in r.text
+    assert 'id="stat-dup-btn"' in r.text

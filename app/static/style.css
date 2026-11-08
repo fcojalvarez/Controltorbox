@@ -109,3 +109,4 @@ tr.group-row td { background: var(--bg); font-weight: 600; padding-top: 14px; }
 tr.group-row td small { display: inline; margin-left: 8px; font-weight: 400; }
 .tag { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 6px; font-size: .75rem; font-weight: 600;
   color: var(--accent); border: 1px solid var(--accent); vertical-align: middle; cursor: pointer; }
+footer { margin-top: 24px; text-align: center; color: var(--muted); font-size: .8rem; }
