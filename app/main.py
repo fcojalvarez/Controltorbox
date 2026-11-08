@@ -210,6 +210,14 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
         "created_at": raw.get("created_at"),
         "state": raw.get("download_state") or ("completed" if raw.get("download_finished") else ""),
         "files": len(files),
+        "file_list": sorted(
+            (
+                {"name": f.get("short_name") or f.get("name") or "", "size": f.get("size") or 0}
+                for f in files
+            ),
+            key=lambda f: f["size"],
+            reverse=True,
+        ),
         "has_video": main is not None,
         "main_file": main_name,
         "audio_status": audio_status,

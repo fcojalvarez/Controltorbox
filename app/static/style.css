@@ -92,3 +92,11 @@ td button.small { display: block; margin-top: 6px; }
 .manual > span { display: block; margin-bottom: 8px; font-weight: 600; }
 .manual div { display: flex; gap: 8px; flex-wrap: wrap; }
 .manual button.active { background: var(--accent); color: #fff; border-color: transparent; }
+
+details.files { margin-top: 6px; font-size: .85rem; }
+details.files summary { cursor: pointer; color: var(--accent); width: fit-content; }
+details.files ul { list-style: none; margin: 6px 0 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); max-height: 260px; overflow: auto; }
+details.files li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+details.files li span:first-child { word-break: break-all; }
+details.files li .main { font-weight: 600; }
+details.files li.note { color: var(--muted); font-style: italic; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 6px; }

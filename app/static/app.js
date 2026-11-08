@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { items: [], selected: new Set(), ffprobe: false };
+const state = { items: [], selected: new Set(), ffprobe: false, openFiles: new Set() };
 const $ = (id) => document.getElementById(id);
 const keyOf = (it) => `${it.kind}:${it.id}`;
 
@@ -71,7 +71,7 @@ function visibleItems() {
   const audio = $("filter-audio").value;
   const kind = $("filter-kind").value;
   const onlyVideo = $("only-video").checked;
-  return state.items.filter((it) => {
+  const items = state.items.filter((it) => {
     if (q && !it.name.toLowerCase().includes(q)) return false;
     if (kind !== "all" && it.kind !== kind) return false;
     if (onlyVideo && !it.has_video) return false;
@@ -79,7 +79,33 @@ function visibleItems() {
     if (audio !== "all" && it.audio_status !== audio) return false;
     return true;
   });
+  return sortItems(items, $("sort").value);
 }
+
+function itemTime(it) {
+  const t = it.created_at ? Date.parse(it.created_at) : NaN;
+  return Number.isNaN(t) ? null : t;
+}
+
+function sortItems(items, how) {
+  const byDate = (dir) => (a, b) => {
+    const ta = itemTime(a), tb = itemTime(b);
+    if (ta === null && tb === null) return 0;
+    if (ta === null) return 1;   // sin fecha, siempre al final
+    if (tb === null) return -1;
+    return dir * (ta - tb);
+  };
+  const cmp = {
+    size_desc: (a, b) => (b.size || 0) - (a.size || 0),
+    size_asc: (a, b) => (a.size || 0) - (b.size || 0),
+    date_desc: byDate(-1),
+    date_asc: byDate(1),
+    name_asc: (a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base", numeric: true }),
+  }[how] || ((a, b) => (b.size || 0) - (a.size || 0));
+  return [...items].sort(cmp);
+}
+
+const DATE_FMT = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" });
 
 function render() {
   const items = visibleItems();
@@ -111,10 +137,43 @@ function render() {
     const tdName = document.createElement("td");
     tdName.className = "name";
     tdName.textContent = it.name;
-    if (it.main_file && it.main_file !== it.name) {
+    const meta = [];
+    const t = itemTime(it);
+    if (t !== null) meta.push(`Añadido el ${DATE_FMT.format(new Date(t))}`);
+    if (it.main_file && it.main_file !== it.name && it.files <= 1) meta.push(it.main_file);
+    if (meta.length) {
       const small = document.createElement("small");
-      small.textContent = it.main_file;
+      small.textContent = meta.join(" · ");
       tdName.appendChild(small);
+    }
+    if (it.files > 1 && it.file_list) {
+      const det = document.createElement("details");
+      det.className = "files";
+      det.open = state.openFiles.has(k);
+      det.addEventListener("toggle", () => {
+        det.open ? state.openFiles.add(k) : state.openFiles.delete(k);
+      });
+      const sum = document.createElement("summary");
+      sum.textContent = `${it.files} archivos`;
+      det.appendChild(sum);
+      const ul = document.createElement("ul");
+      for (const f of it.file_list) {
+        const li = document.createElement("li");
+        const n = document.createElement("span");
+        n.textContent = f.name;
+        if (f.name === it.main_file) n.className = "main";
+        const sz = document.createElement("span");
+        sz.className = "num";
+        sz.textContent = fmtSize(f.size);
+        li.append(n, sz);
+        ul.appendChild(li);
+      }
+      const note = document.createElement("li");
+      note.className = "note";
+      note.textContent = "TorBox no permite borrar archivos sueltos: al eliminar se borra el elemento completo.";
+      ul.appendChild(note);
+      det.appendChild(ul);
+      tdName.appendChild(det);
     }
 
     const tdKind = document.createElement("td");
@@ -506,6 +565,12 @@ $("btn-toggle-key").addEventListener("click", () => {
 $("search").addEventListener("input", render);
 $("filter-audio").addEventListener("change", render);
 $("filter-kind").addEventListener("change", render);
+try { $("sort").value = localStorage.getItem("controltorbox.sort") || "size_desc"; } catch (_) { /* sin storage */ }
+if (!$("sort").value) $("sort").value = "size_desc";
+$("sort").addEventListener("change", () => {
+  try { localStorage.setItem("controltorbox.sort", $("sort").value); } catch (_) { /* sin storage */ }
+  render();
+});
 $("only-video").addEventListener("change", render);
 $("btn-reload").addEventListener("click", load);
 $("btn-analyze").addEventListener("click", analyzeSelected);

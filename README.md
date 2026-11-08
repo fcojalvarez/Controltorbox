@@ -8,6 +8,11 @@ audio en español** y te deja eliminarlos en bloque para liberar espacio.
 
 - Lista todo lo que tienes en TorBox (torrents, Usenet y web) ordenado por tamaño.
 - Filtros por idioma del audio, tipo, nombre y "solo vídeo".
+- Ordenar por tamaño, fecha en que se añadió (más recientes o más antiguos) o nombre.
+  La app recuerda el orden elegido.
+- Ver los archivos de cada torrent o descarga (desplegable «N archivos»), con su tamaño.
+  TorBox no permite borrar archivos sueltos de un torrent: al eliminar se borra el
+  elemento completo.
 - Detección del idioma del audio en dos niveles:
   1. **Por nombre** (instantáneo): busca marcas como `Castellano`, `Spanish`,
      `Latino`, `SPA`, `ESP`… y `VOSE`/`VOS` (versión original subtitulada = sin audio

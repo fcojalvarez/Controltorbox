@@ -214,3 +214,17 @@ def test_tracks_clip_and_manual_status(setup, monkeypatch):
     item = next(i for i in client.get("/api/items").json()["items"] if i["id"] == 2)
     assert item["audio_source"] == "ffprobe" and item["audio_status"] == "unknown"
     assert client.put("/api/items/torrent/2/audio_status", json={"status": "x"}).status_code == 422
+
+
+def test_items_include_file_list_and_date(tmp_path, monkeypatch):
+    monkeypatch.setenv("TORBOX_API_KEY", "x")
+    data = [{"id": 9, "name": "Show.S01", "size": 30, "created_at": "2026-03-01T10:00:00Z", "files": [
+        {"id": 1, "name": "Show.S01/e1.mkv", "short_name": "e1.mkv", "size": 10},
+        {"id": 2, "name": "Show.S01/e2.mkv", "short_name": "e2.mkv", "size": 20},
+    ]}]
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, json={
+        "success": True, "data": data if "torrents" in r.url.path else []}))
+    app = create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path)
+    item = TestClient(app).get("/api/items").json()["items"][0]
+    assert item["created_at"] == "2026-03-01T10:00:00Z"
+    assert item["file_list"] == [{"name": "e2.mkv", "size": 20}, {"name": "e1.mkv", "size": 10}]
