@@ -58,6 +58,40 @@ class AnalysisCache:
 # ---------------------------------------------------------------------------
 # Modelos
 # ---------------------------------------------------------------------------
+class SettingsStore:
+    """Ajustes guardados desde la interfaz (p.ej. la API key de TorBox)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        try:
+            self._data: dict = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            self._data = {}
+
+    def get(self, key: str, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key: str, value) -> None:
+        if value is None:
+            self._data.pop(key, None)
+        else:
+            self._data[key] = value
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)  # contiene la API key
+        except OSError:
+            pass
+        tmp.replace(self.path)
+
+
+def mask_key(key: str) -> str:
+    if not key:
+        return ""
+    return ("•" * 8) + key[-4:] if len(key) > 4 else "•" * len(key)
+
+
 class ItemRef(BaseModel):
     kind: str = Field(pattern="^(torrent|usenet|webdl)$")
     id: int
@@ -65,6 +99,10 @@ class ItemRef(BaseModel):
 
 class ItemsRequest(BaseModel):
     items: list[ItemRef]
+
+
+class SettingsRequest(BaseModel):
+    api_key: str = Field(min_length=1, max_length=512)
 
 
 # ---------------------------------------------------------------------------
@@ -107,19 +145,26 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
     _load_dotenv()
     data_dir = Path(data_dir or os.environ.get("CONTROLTORBOX_DATA_DIR", "data"))
     cache = AnalysisCache(data_dir / "analysis.json")
+    settings = SettingsStore(data_dir / "settings.json")
 
-    if client_factory is None:
-        def client_factory():
-            return TorboxClient(
-                os.environ.get("TORBOX_API_KEY", ""),
-                os.environ.get("TORBOX_BASE_URL", DEFAULT_BASE_URL),
-            )
+    def current_api_key() -> tuple[str, str]:
+        """Devuelve (clave, origen). La guardada en ajustes tiene prioridad."""
+        saved = settings.get("api_key") or ""
+        if saved:
+            return saved, "ajustes"
+        env = os.environ.get("TORBOX_API_KEY", "")
+        return env, ("env" if env else "")
+
+    def make_client(api_key: str):
+        if client_factory is not None:
+            return client_factory(api_key)
+        return TorboxClient(api_key, os.environ.get("TORBOX_BASE_URL", DEFAULT_BASE_URL))
 
     app = FastAPI(title="Controltorbox")
 
     def get_client():
         try:
-            client = client_factory()
+            client = make_client(current_api_key()[0])
         except TorboxError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         try:
@@ -141,10 +186,41 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/status")
     def status():
+        key, source = current_api_key()
         return {
-            "api_key_configured": bool(os.environ.get("TORBOX_API_KEY")),
+            "api_key_configured": bool(key),
+            "api_key_source": source,
             "ffprobe": language.ffprobe_available(),
         }
+
+    @app.get("/api/settings")
+    def get_settings():
+        key, source = current_api_key()
+        return {"api_key_configured": bool(key), "api_key_masked": mask_key(key), "api_key_source": source}
+
+    @app.put("/api/settings")
+    def save_settings(req: SettingsRequest):
+        key = req.api_key.strip()
+        if not key:
+            raise HTTPException(status_code=400, detail="La API key no puede estar vacía.")
+        # Comprobamos que la clave funciona antes de guardarla.
+        try:
+            client = make_client(key)
+            try:
+                client.list("torrent")
+            finally:
+                client.close()
+        except TorboxError as exc:
+            raise HTTPException(status_code=400, detail=f"La API key no es válida: {exc}")
+        except Exception as exc:  # noqa: BLE001 - errores de red
+            raise HTTPException(status_code=502, detail=f"No se pudo contactar con TorBox: {exc}")
+        settings.set("api_key", key)
+        return get_settings()
+
+    @app.delete("/api/settings/api_key")
+    def clear_api_key():
+        settings.set("api_key", None)
+        return get_settings()
 
     @app.get("/api/items")
     def list_items(client=Depends(get_client)):

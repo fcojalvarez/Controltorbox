@@ -27,7 +27,8 @@ def setup(tmp_path, monkeypatch):
 
     def handler(request: httpx.Request):
         path = request.url.path.removeprefix("/v1/api")
-        assert request.headers["authorization"] == "Bearer test"
+        if request.headers["authorization"] not in ("Bearer test", "Bearer nueva"):
+            return httpx.Response(403, json={"success": False, "detail": "BAD_TOKEN"})
         if path in DATA:
             return httpx.Response(200, json={"success": True, "data": DATA[path]})
         if request.method == "POST":
@@ -37,7 +38,7 @@ def setup(tmp_path, monkeypatch):
 
     transport = httpx.MockTransport(handler)
     app = create_app(
-        client_factory=lambda: TorboxClient("test", transport=transport),
+        client_factory=lambda key: TorboxClient(key, transport=transport),
         data_dir=tmp_path,
     )
     return TestClient(app), calls
@@ -78,3 +79,36 @@ def test_analyze_uses_cache(setup, monkeypatch):
     assert r.json()["results"][0]["status"] == "no_es"
     item = next(i for i in client.get("/api/items").json()["items"] if i["id"] == 1)
     assert item["audio_status"] == "no_es" and item["audio_source"] == "ffprobe"
+
+
+def test_settings_api_key(setup, monkeypatch):
+    client, _ = setup
+    s = client.get("/api/settings").json()
+    assert s["api_key_source"] == "env" and "test" not in s["api_key_masked"]
+
+    # Una clave inválida no se guarda
+    r = client.put("/api/settings", json={"api_key": "mala"})
+    assert r.status_code == 400 and "BAD_TOKEN" in r.json()["detail"]
+    assert client.get("/api/settings").json()["api_key_source"] == "env"
+
+    # La clave válida se guarda y tiene prioridad sobre el .env
+    r = client.put("/api/settings", json={"api_key": " nueva "})
+    assert r.status_code == 200
+    assert r.json()["api_key_source"] == "ajustes"
+    assert "nueva" not in r.json()["api_key_masked"][:-4]  # nunca se devuelve entera
+    monkeypatch.delenv("TORBOX_API_KEY")
+    assert client.get("/api/items").status_code == 200
+
+    # Borrarla vuelve a dejar la app sin clave
+    client.delete("/api/settings/api_key")
+    assert client.get("/api/status").json()["api_key_configured"] is False
+    assert client.get("/api/items").status_code == 400
+
+
+def test_settings_persist_on_disk(tmp_path, monkeypatch):
+    monkeypatch.delenv("TORBOX_API_KEY", raising=False)
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"success": True, "data": []}))
+    factory = lambda key: TorboxClient(key, transport=transport)
+    TestClient(create_app(client_factory=factory, data_dir=tmp_path)).put("/api/settings", json={"api_key": "abcd1234"})
+    again = TestClient(create_app(client_factory=factory, data_dir=tmp_path))
+    assert again.get("/api/settings").json()["api_key_masked"].endswith("1234")

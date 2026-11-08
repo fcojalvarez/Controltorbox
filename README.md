@@ -25,12 +25,14 @@ audio en español** y te deja eliminarlos en bloque para liberar espacio.
 
 ## Puesta en marcha
 
-1. Consigue tu API key en TorBox → *Settings* → *API Key*.
-2. Copia `.env.example` a `.env` y pon tu clave:
+Arranca la app (abajo) y abre http://localhost:8000. La primera vez se abre
+**⚙ Ajustes**: pega tu API token de TorBox (torbox.app → *Settings* → *API Key*) y
+pulsa **Guardar**. La app comprueba que el token funciona antes de guardarlo en
+`data/settings.json` (solo en tu equipo, con permisos restringidos). Desde Ajustes
+puedes cambiarlo o borrarlo cuando quieras.
 
-   ```
-   TORBOX_API_KEY=tu-api-key
-   ```
+> Alternativa: también puedes definir `TORBOX_API_KEY` en un archivo `.env`
+> (ver `.env.example`). Si hay un token guardado en Ajustes, tiene prioridad.
 
 ### Con Python (3.10+)
 
@@ -47,12 +49,13 @@ Abre http://localhost:8000
 
 ```bash
 docker build -t controltorbox .
-docker run --rm -p 8000:8000 --env-file .env -v "$PWD/data:/data" controltorbox
+docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/data:/data" controltorbox
 ```
 
 ## Seguridad
 
-- La API key sólo vive en el servidor local (`.env`), nunca se envía al navegador.
+- El token se guarda sólo en tu equipo (`data/settings.json` o `.env`). La interfaz
+  nunca lo recibe completo: solo ve los últimos 4 caracteres.
 - Por defecto `uvicorn` escucha en `127.0.0.1`. No expongas la app a Internet: no
   tiene autenticación y permite borrar contenido de tu cuenta.
 - Eliminar en TorBox es **irreversible**.

@@ -144,8 +144,9 @@ async function load() {
     const st = await api("/api/status");
     state.ffprobe = st.ffprobe;
     if (!st.api_key_configured) {
-      banner("Falta TORBOX_API_KEY. Créala en el archivo .env y reinicia la aplicación.");
-      $("rows").innerHTML = '<tr><td colspan="5" class="empty">Sin API key.</td></tr>';
+      banner("Configura tu API token de TorBox en ⚙ Ajustes para empezar.", "info");
+      $("rows").innerHTML = '<tr><td colspan="5" class="empty">Sin API token.</td></tr>';
+      openSettings();
       return;
     }
     if (!st.ffprobe) {
@@ -223,6 +224,83 @@ async function deleteSelected() {
     updateSelection();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Ajustes
+// ---------------------------------------------------------------------------
+function settingsError(msg) {
+  const el = $("settings-error");
+  el.textContent = msg || "";
+  el.classList.toggle("hidden", !msg);
+}
+
+async function openSettings() {
+  settingsError(null);
+  $("api-key").value = "";
+  $("api-key").type = "password";
+  const dlg = $("settings");
+  if (!dlg.open) dlg.showModal();
+  try {
+    const s = await api("/api/settings");
+    $("api-key-current").textContent = s.api_key_configured
+      ? `Token actual: ${s.api_key_masked}` + (s.api_key_source === "env" ? " (desde .env)" : "")
+      : "No hay ningún token configurado.";
+    $("btn-clear-key").disabled = s.api_key_source !== "ajustes";
+  } catch (err) {
+    settingsError(err.message);
+  }
+}
+
+async function saveSettings(e) {
+  e.preventDefault();
+  const key = $("api-key").value.trim();
+  if (!key) { settingsError("Introduce el API token."); return; }
+  const btn = $("btn-save-key");
+  btn.disabled = true;
+  btn.textContent = "Comprobando…";
+  settingsError(null);
+  try {
+    const res = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: key }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `Error HTTP ${res.status}`);
+    $("settings").close();
+    await load();
+    banner("API token guardado correctamente.", "ok");
+  } catch (err) {
+    settingsError(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Guardar";
+  }
+}
+
+async function clearKey() {
+  if (!confirm("¿Borrar el API token guardado?")) return;
+  try {
+    const res = await fetch("/api/settings/api_key", { method: "DELETE" });
+    if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
+    $("settings").close();
+    state.items = [];
+    state.selected.clear();
+    updateStats();
+    await load();
+  } catch (err) {
+    settingsError(err.message);
+  }
+}
+
+$("btn-settings").addEventListener("click", openSettings);
+$("settings-form").addEventListener("submit", saveSettings);
+$("btn-clear-key").addEventListener("click", clearKey);
+$("btn-close-settings").addEventListener("click", () => $("settings").close());
+$("btn-toggle-key").addEventListener("click", () => {
+  const i = $("api-key");
+  i.type = i.type === "password" ? "text" : "password";
+});
 
 $("search").addEventListener("input", render);
 $("filter-audio").addEventListener("change", render);

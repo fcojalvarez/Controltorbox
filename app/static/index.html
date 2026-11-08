@@ -8,8 +8,11 @@
 </head>
 <body>
   <header>
-    <h1>Controltorbox</h1>
-    <p class="sub">Gestiona tu almacenamiento de TorBox y elimina lo que no tiene audio en español.</p>
+    <div>
+      <h1>Controltorbox</h1>
+      <p class="sub">Gestiona tu almacenamiento de TorBox y elimina lo que no tiene audio en español.</p>
+    </div>
+    <button id="btn-settings" class="secondary" title="Ajustes">⚙ Ajustes</button>
   </header>
 
   <div id="banner" class="banner hidden"></div>
@@ -70,6 +73,26 @@
       <menu>
         <button value="cancel" class="secondary">Cancelar</button>
         <button value="ok" class="danger">Eliminar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="settings">
+    <form id="settings-form" method="dialog">
+      <h2>Ajustes</h2>
+      <label for="api-key">API token de TorBox</label>
+      <p class="hint" id="api-key-current"></p>
+      <div class="key-row">
+        <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Pega aquí tu API token">
+        <button type="button" id="btn-toggle-key" class="secondary" title="Mostrar/ocultar">👁</button>
+      </div>
+      <p class="hint">Lo encontrarás en torbox.app → Settings → API Key. Se guarda solo en este equipo.</p>
+      <p id="settings-error" class="warn-text hidden"></p>
+      <menu>
+        <button type="button" id="btn-clear-key" class="secondary">Borrar token</button>
+        <span class="spacer"></span>
+        <button type="button" id="btn-close-settings" class="secondary">Cerrar</button>
+        <button type="submit" id="btn-save-key" value="save">Guardar</button>
       </menu>
     </form>
   </dialog>
