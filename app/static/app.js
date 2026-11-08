@@ -27,9 +27,18 @@ async function api(path, body) {
     ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
     : {};
   const res = await fetch(path, opts);
+  return parseResponse(res);
+}
+
+async function parseResponse(res) {
+  const text = await res.text();
   let data = {};
-  try { data = await res.json(); } catch (_) { /* vacío */ }
-  if (!res.ok) throw new Error(data.detail || `Error HTTP ${res.status}`);
+  try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { detail: text.slice(0, 300) }; }
+  if (!res.ok) {
+    let detail = data.detail;
+    if (Array.isArray(detail)) detail = detail.map((d) => d.msg).join("; ");
+    throw new Error(detail ? `${detail} (HTTP ${res.status})` : `Error HTTP ${res.status}`);
+  }
   return data;
 }
 
@@ -265,8 +274,7 @@ async function saveSettings(e) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: key }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `Error HTTP ${res.status}`);
+    await parseResponse(res);
     $("settings").close();
     await load();
     banner("API token guardado correctamente.", "ok");

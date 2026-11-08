@@ -112,3 +112,40 @@ def test_settings_persist_on_disk(tmp_path, monkeypatch):
     TestClient(create_app(client_factory=factory, data_dir=tmp_path)).put("/api/settings", json={"api_key": "abcd1234"})
     again = TestClient(create_app(client_factory=factory, data_dir=tmp_path))
     assert again.get("/api/settings").json()["api_key_masked"].endswith("1234")
+
+
+def test_settings_save_failure_returns_readable_error(tmp_path, monkeypatch):
+    monkeypatch.delenv("TORBOX_API_KEY", raising=False)
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"success": True, "data": []}))
+    app = create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path)
+    from pathlib import Path
+
+    def boom(self, *a, **kw):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "write_text", boom)
+    r = TestClient(app, raise_server_exceptions=False).put("/api/settings", json={"api_key": "abc12345"})
+    assert r.status_code == 500
+    assert "No se pudo guardar" in r.json()["detail"]
+
+
+def test_unexpected_errors_are_json(tmp_path, monkeypatch):
+    monkeypatch.setenv("TORBOX_API_KEY", "x")
+
+    class Broken:
+        def list(self, kind):
+            raise ValueError("algo raro")
+
+        def close(self):
+            pass
+
+    app = create_app(client_factory=lambda k: Broken(), data_dir=tmp_path)
+    r = TestClient(app, raise_server_exceptions=False).get("/api/items")
+    assert r.status_code == 500 and "algo raro" in r.json()["detail"]
+
+
+def test_default_data_dir_is_project_dir(monkeypatch, tmp_path):
+    from app import main
+    monkeypatch.delenv("CONTROLTORBOX_DATA_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert main.resolve_data_dir() == main.PROJECT_DIR / "data"

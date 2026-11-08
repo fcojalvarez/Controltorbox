@@ -60,6 +60,13 @@ docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/data:/data" controltorbox
   tiene autenticación y permite borrar contenido de tu cuenta.
 - Eliminar en TorBox es **irreversible**.
 
+## Problemas frecuentes
+
+- **Error al guardar el token**: la app guarda los ajustes en la carpeta `data/` del
+  proyecto. Si no puede escribir ahí, usa `~/.controltorbox`. Puedes elegir otra
+  carpeta con `CONTROLTORBOX_DATA_DIR=/ruta`. El mensaje de error en pantalla y en la
+  consola de `uvicorn` indica la causa exacta.
+
 ## Tests
 
 ```bash

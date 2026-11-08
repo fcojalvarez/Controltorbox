@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -16,9 +17,47 @@ from . import language
 from .torbox import DEFAULT_BASE_URL, KINDS, TorboxClient, TorboxError
 
 STATIC_DIR = Path(__file__).parent / "static"
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+log = logging.getLogger("controltorbox")
 
 
-def _load_dotenv(path: Path = Path(".env")) -> None:
+class StorageError(RuntimeError):
+    pass
+
+
+def _writable_dir(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def resolve_data_dir(explicit: Path | str | None = None) -> Path:
+    """Carpeta donde se guardan ajustes y caché.
+
+    Por defecto es <proyecto>/data (no depende de desde dónde se lance la app).
+    Si no se puede escribir ahí, se usa ~/.controltorbox.
+    """
+    if explicit:
+        return Path(explicit)
+    env = os.environ.get("CONTROLTORBOX_DATA_DIR")
+    if env:
+        return Path(env)
+    default = PROJECT_DIR / "data"
+    if _writable_dir(default):
+        return default
+    fallback = Path.home() / ".controltorbox"
+    log.warning("No se puede escribir en %s; usando %s", default, fallback)
+    return fallback
+
+
+def _load_dotenv(path: Path | None = None) -> None:
+    if path is None:
+        path = Path(".env") if Path(".env").exists() else PROJECT_DIR / ".env"
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -37,22 +76,28 @@ class AnalysisCache:
         self._lock = threading.Lock()
         try:
             self._data: dict = json.loads(path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, ValueError):
+        except (OSError, ValueError):
             self._data = {}
 
     def get(self, key: str) -> dict | None:
         return self._data.get(key)
 
+    def _save(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+        except OSError as exc:  # la caché es opcional: no rompemos nada
+            log.warning("No se pudo guardar la caché de análisis: %s", exc)
+
     def set(self, key: str, value: dict) -> None:
         with self._lock:
             self._data[key] = value
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+            self._save()
 
     def drop(self, key: str) -> None:
         with self._lock:
             if self._data.pop(key, None) is not None:
-                self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+                self._save()
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +109,10 @@ class SettingsStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         try:
-            self._data: dict = json.loads(path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, ValueError):
+            self._data: dict = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(self._data, dict):
+                self._data = {}
+        except (OSError, ValueError):
             self._data = {}
 
     def get(self, key: str, default=None):
@@ -76,14 +123,21 @@ class SettingsStore:
             self._data.pop(key, None)
         else:
             self._data[key] = value
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+        content = json.dumps(self._data, indent=2)
         try:
-            os.chmod(tmp, 0o600)  # contiene la API key
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            # Escritura directa (sin renombrar un temporal): en Windows,
+            # OneDrive o el antivirus pueden bloquear el renombrado.
+            self.path.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            raise StorageError(
+                f"No se pudo guardar en {self.path}: {exc.strerror or exc}. "
+                "Comprueba los permisos de la carpeta o define CONTROLTORBOX_DATA_DIR."
+            ) from exc
+        try:
+            os.chmod(self.path, 0o600)  # contiene la API key
         except OSError:
             pass
-        tmp.replace(self.path)
 
 
 def mask_key(key: str) -> str:
@@ -143,7 +197,7 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
 
 def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
     _load_dotenv()
-    data_dir = Path(data_dir or os.environ.get("CONTROLTORBOX_DATA_DIR", "data"))
+    data_dir = resolve_data_dir(data_dir)
     cache = AnalysisCache(data_dir / "analysis.json")
     settings = SettingsStore(data_dir / "settings.json")
 
@@ -161,6 +215,20 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         return TorboxClient(api_key, os.environ.get("TORBOX_BASE_URL", DEFAULT_BASE_URL))
 
     app = FastAPI(title="Controltorbox")
+
+    @app.exception_handler(StorageError)
+    async def storage_error(request, exc: StorageError):
+        log.error("%s", exc)
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(request, exc: Exception):
+        # Siempre devolvemos JSON con la causa para que la interfaz la muestre.
+        log.exception("Error inesperado en %s", request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Error interno: {type(exc).__name__}: {exc}"},
+        )
 
     def get_client():
         try:
