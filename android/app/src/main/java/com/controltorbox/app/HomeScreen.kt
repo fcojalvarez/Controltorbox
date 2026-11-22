@@ -180,8 +180,8 @@ private fun LimitsBar(parts: List<Triple<Kind, Color, Long>>, scale: Long, used:
             if (1f - filled > 0.001f) Spacer(Modifier.weight(1f - filled))
         }
         val endLabel = when {
-            account != null -> "Cuenta ${Format.size(account)}"
-            alert != null -> "Aviso ${Format.size(alert)}"
+            account != null -> Format.size(account)
+            alert != null -> Format.size(alert)
             else -> null
         }
         val endLabelWidth = endLabel?.let { (it.length * 6.2f + 16).dp } ?: 0.dp
@@ -196,7 +196,7 @@ private fun LimitsBar(parts: List<Triple<Kind, Color, Long>>, scale: Long, used:
         if (account != null && alert != null && alert < scale) {
             val x = w * (alert.toFloat() / scale)
             Box(Modifier.offset(x = x - 1.dp).fillMaxHeight().width(2.dp).background(c.text))
-            val label = "Aviso ${Format.size(alert)}"
+            val label = Format.size(alert)
             val labelWidth = (label.length * 6.2f + 8).dp
             // A la derecha de la marca si cabe antes de la etiqueta final; si no, a la izquierda.
             // Si el relleno pasa de la marca, el texto empieza donde acaba el relleno para que se lea.
