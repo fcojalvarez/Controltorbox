@@ -67,6 +67,19 @@ class Store(context: Context) {
         get() = prefs.getStringSet("kept", emptySet())?.toSet() ?: emptySet()
         set(v) = prefs.edit().putStringSet("kept", v).apply()
 
+    /** Plan leído de TorBox y límite de almacenamiento (detectado o puesto a mano, en GB; 0 = sin definir). */
+    var accountPlan: Int?
+        get() = prefs.getInt("account_plan", -1).takeIf { it >= 0 }
+        set(v) = prefs.edit().putInt("account_plan", v ?: -1).apply()
+
+    var accountLimitDetected: Long?
+        get() = prefs.getLong("account_limit_detected", 0).takeIf { it > 0 }
+        set(v) = prefs.edit().putLong("account_limit_detected", v ?: 0).apply()
+
+    var accountLimitManualGb: Int
+        get() = prefs.getInt("account_limit_manual_gb", 0)
+        set(v) = prefs.edit().putInt("account_limit_manual_gb", v).apply()
+
     var lastCheck: Long
         get() = prefs.getLong("last_check", 0)
         set(v) = prefs.edit().putLong("last_check", v).apply()

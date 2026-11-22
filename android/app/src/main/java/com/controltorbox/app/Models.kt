@@ -38,6 +38,13 @@ data class TorboxItem(
     val totalSize: Long get() = if (size > 0) size else files.sumOf { it.size }
 }
 
+/** Datos de la cuenta de TorBox. */
+data class AccountInfo(val plan: Int?, val storageLimitBytes: Long?) {
+    val planName: String? get() = when (plan) {
+        0 -> "Free"; 1 -> "Essential"; 2 -> "Pro"; 3 -> "Standard"; else -> null
+    }
+}
+
 enum class AudioStatus(val label: String) { ES("Español"), NO_ES("Sin español"), UNKNOWN("Desconocido") }
 
 enum class AudioSource(val label: String) { NAME("por nombre"), ANALYZED("analizado"), MANUAL("marcado a mano") }

@@ -41,10 +41,12 @@ class ScreenshotTest {
         item(Kind.USENET, 10, "The.Bear.S03E02.720p.HDTV", 1.2, ago(4)),
     )
 
-    private fun vm(update: UpdateInfo? = null, token: String = "token-de-prueba-9f2a"): MainViewModel {
+    private fun vm(update: UpdateInfo? = null, token: String = "token-de-prueba-9f2a", accountGb: Int = 1000): MainViewModel {
         val app = TestApp(paparazzi.context)
         val store = Store(app)
         store.token = token
+        store.accountPlan = 2
+        store.accountLimitManualGb = accountGb
         store.availableUpdate = update
         store.saveAnalysis("usenet:9", Analysis(AudioStatus.ES, listOf("spa", "en"), listOf(
             AudioTrack(0, "spa", "Castellano", "E-AC3", 6, true), AudioTrack(1, "en", "", "TrueHD", 8, false),
@@ -59,6 +61,17 @@ class ScreenshotTest {
 
     @Test fun inicio_con_actualizacion() {
         val vm = vm(UpdateInfo(99, "1.0.12", "https://example/Controltorbox.apk"))
+        paparazzi.snapshot { Root(vm, Nav()) }
+    }
+
+    @Test fun inicio_sin_limite_de_cuenta() {
+        val vm = vm(accountGb = 0)
+        paparazzi.snapshot { Root(vm, Nav()) }
+    }
+
+    @Test fun inicio_aviso_superado() {
+        val vm = vm()
+        vm.saveAlertSettings(AlertSettings(storageLimitGb = 50))
         paparazzi.snapshot { Root(vm, Nav()) }
     }
 

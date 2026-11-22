@@ -63,7 +63,7 @@ fun SettingsScreen(vm: MainViewModel, state: UiState) {
 
         Column {
             SettingsGroupTitle("Cuenta de TorBox")
-            AppCard(modifier = Modifier.fillMaxWidth()) {
+            AppCard(modifier = Modifier.fillMaxWidth()) { Column {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     IconTile(Ic.Check, c.green, c.greenSoft, size = 40.dp)
                     Column(Modifier.weight(1f)) {
@@ -72,7 +72,29 @@ fun SettingsScreen(vm: MainViewModel, state: UiState) {
                     }
                     PillButton("Cambiar", { tokenDialog = true }, filled = false, height = 36.dp)
                 }
-            }
+                HorizontalDivider(color = c.chip, modifier = Modifier.padding(horizontal = 16.dp))
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Almacenamiento de la cuenta", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.text)
+                        Text(
+                            when {
+                                state.accountLimitFromTorbox -> "Leído de TorBox" + (state.planName?.let { " · plan $it" } ?: "")
+                                else -> (state.planName?.let { "Plan $it · " } ?: "") + "TorBox no lo indica: ponlo tú"
+                            },
+                            fontSize = 12.sp, color = c.muted,
+                        )
+                    }
+                    if (state.accountLimitFromTorbox) {
+                        Text(Format.size(state.accountLimit ?: 0), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = c.text)
+                    } else {
+                        Stepper(
+                            value = vm.store.accountLimitManualGb, enabled = true, min = 0, steps = listOf(100, 500),
+                            format = { if (it == 0) "—" else Format.size(it * UiState.GB) },
+                            onChange = vm::setAccountLimitGb,
+                        )
+                    }
+                }
+            } }
         }
 
         Column {
@@ -178,21 +200,30 @@ private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChang
 }
 
 @Composable
-private fun Stepper(value: Int, enabled: Boolean, onChange: (Int) -> Unit) {
+private fun Stepper(
+    value: Int,
+    enabled: Boolean,
+    onChange: (Int) -> Unit,
+    min: Int = 50,
+    steps: List<Int> = listOf(50, 250),
+    format: (Int) -> String = { "$it GB" },
+) {
     val c = C.c
-    val step = if (value >= 1000) 250 else 50
+    // Pasos pequeños hasta 1 TB y más grandes por encima.
+    val up = if (value >= 1000) steps[1] else steps[0]
+    val down = if (value > 1000) steps[1] else steps[0]
     Row(
         Modifier.border(1.dp, c.borderStrong, RoundedCornerShape(20.dp)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = { onChange((value - step).coerceAtLeast(50)) }, enabled = enabled && value > 50, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = { onChange((value - down).coerceAtLeast(min)) }, enabled = enabled && value > min, modifier = Modifier.size(40.dp)) {
             Text("−", fontSize = 18.sp, color = if (enabled) c.text else c.faint)
         }
         Text(
-            "$value GB", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (enabled) c.text else c.faint,
+            format(value), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (enabled) c.text else c.faint,
             textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 72.dp),
         )
-        IconButton(onClick = { onChange(value + step) }, enabled = enabled, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = { onChange(value + up) }, enabled = enabled, modifier = Modifier.size(40.dp)) {
             Text("+", fontSize = 18.sp, color = if (enabled) c.text else c.faint)
         }
     }

@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -118,37 +121,52 @@ fun HomeScreen(vm: MainViewModel, state: UiState, nav: Nav) {
 @Composable
 private fun StorageCard(state: UiState) {
     val c = C.c
-    val total = state.totalSize
-    val limit = state.storageLimitGb.toLong() * 1024 * 1024 * 1024
+    val used = state.totalSize
+    val account = state.accountLimit
+    val alert = state.alertLimit
+    // La barra llega hasta el límite de la cuenta; si no se conoce, hasta tu aviso.
+    val scale = maxOf(account ?: alert ?: used, used, 1L)
     AppCard(radius = 20.dp) {
         Column(Modifier.padding(18.dp)) {
             Row {
                 Text("Espacio ocupado", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.muted, modifier = Modifier.weight(1f))
-                Text("límite ${state.storageLimitGb} GB", fontSize = 13.sp, color = c.muted)
+                state.planName?.let { Text("Plan $it", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = c.chipText) }
             }
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 6.dp)) {
-                val (num, unit) = Format.size(total).split(" ").let { it[0] to it.getOrElse(1) { "" } }
+                val (num, unit) = Format.size(used).split(" ").let { it[0] to it.getOrElse(1) { "" } }
                 Text(num, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = c.text)
                 Text(" $unit", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = c.chipText, modifier = Modifier.padding(bottom = 6.dp))
+                account?.let {
+                    Text(" de ${Format.size(it)}", fontSize = 16.sp, color = c.muted, modifier = Modifier.padding(bottom = 6.dp))
+                }
                 Spacer(Modifier.weight(1f))
                 Text("${state.rows.size} elementos", fontSize = 13.sp, color = c.muted, modifier = Modifier.padding(bottom = 6.dp))
             }
+
             val parts = listOf(Kind.TORRENT to c.accent, Kind.USENET to c.accent.copy(alpha = 0.55f), Kind.WEBDL to c.accent.copy(alpha = 0.3f))
                 .map { (k, col) -> Triple(k, col, state.sizeOf(k)) }.filter { it.third > 0 }
-            Row(Modifier.padding(top = 12.dp).fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(c.chip)) {
-                if (limit > 0) {
-                    var used = 0f
+            val over = alert != null && used > alert
+            BoxWithConstraints(Modifier.padding(top = 14.dp).fillMaxWidth().height(22.dp)) {
+                val w = maxWidth
+                Row(Modifier.align(Alignment.Center).fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp)).background(c.chip)) {
+                    var filled = 0f
                     parts.forEach { (_, col, size) ->
-                        val f = (size.toFloat() / limit).coerceIn(0f, 1f - used)
+                        val f = (size.toFloat() / scale).coerceIn(0f, 1f - filled)
                         if (f > 0.001f) {
-                            Box(Modifier.fillMaxHeight().weight(f).background(col))
-                            used += f
+                            Box(Modifier.fillMaxHeight().weight(f).background(if (over) c.orange else col))
+                            filled += f
                         }
                     }
-                    if (1f - used > 0.001f) Spacer(Modifier.weight(1f - used))
+                    if (1f - filled > 0.001f) Spacer(Modifier.weight(1f - filled))
+                }
+                // Marca de tu aviso dentro de la barra (si la barra va hasta el límite de la cuenta).
+                if (alert != null && alert < scale) {
+                    val x = w * (alert.toFloat() / scale)
+                    Box(Modifier.offset(x = x - 1.5.dp).fillMaxHeight().width(3.dp).clip(RoundedCornerShape(2.dp)).background(c.text))
                 }
             }
-            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 parts.forEach { (k, col, size) ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(col))
@@ -156,7 +174,39 @@ private fun StorageCard(state: UiState) {
                     }
                 }
             }
+            HorizontalDivider(color = c.chip, modifier = Modifier.padding(vertical = 12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LimitLine(
+                    marker = { Box(Modifier.size(width = 3.dp, height = 12.dp).clip(RoundedCornerShape(2.dp)).background(c.text)) },
+                    label = "Tu aviso",
+                    value = alert?.let { Format.size(it) } ?: "desactivado",
+                    detail = alert?.let { if (over) "superado en ${Format.size(used - it)}" else "quedan ${Format.size(it - used)}" },
+                    detailColor = if (over) c.orange else c.muted,
+                )
+                LimitLine(
+                    marker = { Box(Modifier.size(width = 12.dp, height = 12.dp).clip(RoundedCornerShape(3.dp)).background(c.chip)) },
+                    label = "Cuenta",
+                    value = account?.let { Format.size(it) } ?: "sin definir",
+                    detail = when {
+                        account == null -> "ponlo en Ajustes"
+                        used > account -> "superado"
+                        else -> "libres ${Format.size(account - used)}"
+                    },
+                    detailColor = c.muted,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun LimitLine(marker: @Composable () -> Unit, label: String, value: String, detail: String?, detailColor: Color) {
+    val c = C.c
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.width(12.dp), contentAlignment = Alignment.Center) { marker() }
+        Text(label, fontSize = 13.sp, color = c.chipText, modifier = Modifier.weight(1f), maxLines = 1)
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = c.text)
+        detail?.let { Text("· $it", fontSize = 12.sp, color = detailColor) }
     }
 }
 

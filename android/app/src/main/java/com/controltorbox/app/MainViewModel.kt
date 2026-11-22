@@ -66,7 +66,16 @@ data class UiState(
     /** Copia elegida para conservar en cada grupo de duplicados (por id de grupo). */
     val dupKeep: Map<String, String> = emptyMap(),
     val storageLimitGb: Int = 500,
+    val notifyStorage: Boolean = true,
+    val planName: String? = null,
+    /** Límite de la cuenta de TorBox en bytes (null = desconocido). */
+    val accountLimit: Long? = null,
+    /** true si el límite de la cuenta lo dio TorBox; false si lo pusiste tú. */
+    val accountLimitFromTorbox: Boolean = false,
 ) {
+    /** Tu aviso de espacio en bytes (null si está desactivado). */
+    val alertLimit: Long? get() = if (notifyStorage && storageLimitGb > 0) storageLimitGb.toLong() * GB else null
+
     val totalSize: Long get() = rows.sumOf { it.size }
     fun sizeOf(kind: Kind) = rows.filter { it.item.kind == kind }.sumOf { it.size }
     fun row(key: String) = rows.firstOrNull { it.key == key }
@@ -122,6 +131,7 @@ data class UiState(
     val showUpdateDock: Boolean get() = update != null && !updateDismissed
 
     companion object {
+        const val GB = 1024L * 1024 * 1024
         val RANK = mapOf(AudioStatus.ES to 2, AudioStatus.UNKNOWN to 1, AudioStatus.NO_ES to 0)
 
         fun sortRows(rows: List<ItemRow>, sort: SortOrder): List<ItemRow> = when (sort) {
@@ -146,6 +156,20 @@ data class DupGroup(val id: String, val label: String, val members: List<ItemRow
     val freeable: Long get() = toDelete.sumOf { it.size }
 }
 
+/** Copia los límites (cuenta y aviso) desde lo guardado. */
+fun UiState.withLimits(store: Store): UiState {
+    val detected = store.accountLimitDetected
+    val manual = store.accountLimitManualGb.takeIf { it > 0 }?.let { it.toLong() * UiState.GB }
+    val settings = store.alertSettings
+    return copy(
+        storageLimitGb = settings.storageLimitGb,
+        notifyStorage = settings.notifyStorage,
+        planName = AccountInfo(store.accountPlan, null).planName,
+        accountLimit = detected ?: manual,
+        accountLimitFromTorbox = detected != null,
+    )
+}
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     val store = Store(app)
     private var items: List<TorboxItem> = emptyList()
@@ -154,8 +178,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             hasToken = store.token.isNotBlank(),
             sort = SortOrder.fromKey(store.sort),
             update = store.availableUpdate,
-            storageLimitGb = store.alertSettings.storageLimitGb,
-        ),
+        ).withLimits(store),
     )
     val state: StateFlow<UiState> = _state
 
@@ -177,8 +200,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 selected = it.selected intersect keys,
                 decisions = it.decisions.filterKeys { k -> k in keys },
                 hasToken = store.token.isNotBlank(),
-                storageLimitGb = store.alertSettings.storageLimitGb,
-            )
+            ).withLimits(store)
         }
     }
 
@@ -202,6 +224,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 items = list
                 rebuildRows()
                 _state.update { it.copy(error = errors.takeIf { e -> e.isNotEmpty() }?.joinToString("\n")) }
+                // Plan y límite de la cuenta (si falla, se mantiene lo último guardado).
+                try {
+                    val acc = api().account()
+                    store.accountPlan = acc.plan
+                    store.accountLimitDetected = acc.storageLimitBytes
+                    _state.update { it.withLimits(store) }
+                } catch (e: TorboxException) { /* no es imprescindible */ }
                 // Primera carga: memorizamos lo que hay para que los avisos solo hablen de lo nuevo.
                 if (store.monitorState == null) {
                     store.monitorState = Monitor.check(null, list, store.alertSettings).second
@@ -357,7 +386,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveAlertSettings(s: AlertSettings) {
         store.alertSettings = s
-        _state.update { it.copy(storageLimitGb = s.storageLimitGb) }
+        _state.update { it.withLimits(store) }
+    }
+
+    fun setAccountLimitGb(gb: Int) {
+        store.accountLimitManualGb = gb.coerceAtLeast(0)
+        _state.update { it.withLimits(store) }
     }
 
     // -- Actualizaciones ----------------------------------------------------------

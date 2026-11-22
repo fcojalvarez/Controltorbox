@@ -34,6 +34,7 @@ class TorboxApiTest {
                     "webdl/mylist" -> MockResponse().setResponseCode(500).setBody("""{"success":false,"detail":"caído"}""")
                     "torrents/controltorrent" -> ok("null")
                     "torrents/requestdl" -> ok("\"https://cdn.example/file.mkv\"")
+                    "user/me" -> ok("""{"id":1,"plan":2,"email":"x@y","total_downloaded":5,"is_subscribed":true}""")
                     else -> MockResponse().setResponseCode(404).setBody("""{"success":false,"detail":"nope"}""")
                 }
             }
@@ -85,6 +86,22 @@ class TorboxApiTest {
         assertEquals("1", u.queryParameter("torrent_id"))
         assertEquals("10", u.queryParameter("file_id"))
         assertEquals("false", u.queryParameter("redirect"))
+    }
+
+    @Test fun accountReadsPlan() = runTest {
+        val a = api().account()
+        assertEquals(2, a.plan)
+        assertEquals("Pro", a.planName)
+        assertEquals(null, a.storageLimitBytes)   // la API documentada no lo trae
+        assertEquals("false", requests.last().requestUrl!!.queryParameter("settings"))
+    }
+
+    @Test fun accountDetectsStorageLimitIfPresent() {
+        val gb = 1024L * 1024 * 1024
+        assertEquals(1000 * gb, TorboxApi.parseAccount(JSONObject("""{"plan":3,"storage_limit":1000}""")).storageLimitBytes)
+        assertEquals(2000 * gb, TorboxApi.parseAccount(JSONObject("""{"plan":2,"max_storage_bytes":${2000 * gb}}""")).storageLimitBytes)
+        assertEquals(null, TorboxApi.parseAccount(JSONObject("""{"plan":1,"storage_used":${5 * gb}}""")).storageLimitBytes)
+        assertEquals(null, TorboxApi.parseAccount(JSONObject("""{"total_downloaded":123}""")).storageLimitBytes)
     }
 
     @Test(expected = TorboxException::class) fun emptyTokenFails() { TorboxApi("") }

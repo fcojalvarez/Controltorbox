@@ -79,6 +79,14 @@ class TorboxApi(
         Unit
     }
 
+    /** Plan de la cuenta y, si TorBox lo indica, su límite de almacenamiento. */
+    suspend fun account(): AccountInfo = withContext(Dispatchers.IO) {
+        val u = url("user/me").newBuilder().addQueryParameter("settings", "false").build()
+        val data = execute(Request.Builder().url(u).get().build()) as? JSONObject
+            ?: throw TorboxException("TorBox no devolvió los datos de la cuenta.")
+        parseAccount(data)
+    }
+
     suspend fun downloadLink(kind: Kind, id: Long, fileId: Long): String = withContext(Dispatchers.IO) {
         val u = url(kind.requestDlPath).newBuilder()
             .addQueryParameter("token", token)
@@ -98,6 +106,29 @@ class TorboxApi(
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
+
+        /**
+         * La documentación de TorBox no incluye un campo de almacenamiento máximo; por si la
+         * respuesta real lo trae, se busca uno numérico cuyo nombre hable de almacenamiento y límite.
+         */
+        fun parseAccount(o: JSONObject): AccountInfo {
+            val plan = if (o.has("plan") && !o.isNull("plan")) o.optInt("plan") else null
+            var limit: Long? = null
+            for (key in o.keys()) {
+                val k = key.lowercase()
+                val aboutStorage = "storage" in k || "space" in k || "quota" in k
+                val isLimit = "limit" in k || "max" in k || "total" in k || "quota" in k
+                if (aboutStorage && isLimit && "used" !in k) {
+                    val v = o.optDouble(key)
+                    if (!v.isNaN()) {
+                        // En bytes, o en GB si el número es pequeño.
+                        limit = if (v > 1e7) v.toLong() else (v * 1024 * 1024 * 1024).toLong()
+                        break
+                    }
+                }
+            }
+            return AccountInfo(plan, limit?.takeIf { it > 0 })
+        }
 
         fun parseItem(kind: Kind, o: JSONObject): TorboxItem {
             val filesArr = o.optJSONArray("files") ?: JSONArray()
