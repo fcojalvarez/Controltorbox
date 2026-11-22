@@ -139,6 +139,21 @@ class ScreenshotTest {
         }
     }
 
+    @Test fun ficha_serie_analizada_antes() {
+        val vm = vm()
+        vm.store.saveAnalysis("torrent:2", Analysis(AudioStatus.ES, listOf("spa"), listOf(AudioTrack(0, "spa", "Castellano", "AC3", 6, true))))
+        vm.rebuildRows()
+        val row = vm.state.value.row("torrent:2")!!
+        paparazzi.snapshot { AppTheme { DetailContent(row, false, null, PlaybackUi(), {}, {}, {}, {}, {}, {}, {}) } }
+    }
+
+    @Test fun ficha_sin_video() {
+        val vm = vm()
+        vm.loadItems(listOf(item(Kind.WEBDL, 50, "Serie.S01.COMPLETA", 4.0, ago(1), files = listOf("Serie.S01.part1.rar", "Serie.S01.part2.rar"))))
+        val row = vm.state.value.row("webdl:50")!!
+        paparazzi.snapshot { AppTheme { DetailContent(row, false, null, PlaybackUi(), {}, {}, {}, {}, {}, {}, {}) } }
+    }
+
     @Test fun ficha_sin_analizar() {
         val vm = vm()
         val row = vm.state.value.row("torrent:2")!!

@@ -139,6 +139,7 @@ class TorboxApi(
                         name = f.optString("name"),
                         shortName = f.optString("short_name"),
                         size = f.optLong("size"),
+                        mimetype = f.optString("mimetype").takeIf { it != "null" }.orEmpty(),
                     )
                 }
             }

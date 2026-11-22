@@ -19,7 +19,10 @@ enum class Kind(
     }
 }
 
-data class TorboxFile(val id: Long, val name: String, val shortName: String, val size: Long) {
+data class TorboxFile(val id: Long, val name: String, val shortName: String, val size: Long, val mimetype: String = "") {
+    /** Vídeo por extensión o por el tipo que indica TorBox (p. ej. «video/x-matroska»). */
+    val isVideo: Boolean get() = Language.isVideo(name) || Language.isVideo(shortName) || mimetype.startsWith("video/", ignoreCase = true)
+
     val displayName: String get() = shortName.ifBlank { name.substringAfterLast('/') }
 }
 
@@ -39,7 +42,7 @@ data class TorboxItem(
     /** Archivos de vídeo sin «samples», ordenados por nombre (los episodios de una temporada). */
     val videoFiles: List<TorboxFile>
         get() {
-            val videos = files.filter { Language.isVideo(it.name.ifBlank { it.shortName }) || Language.isVideo(it.shortName) }
+            val videos = files.filter { it.isVideo }
             val biggest = videos.maxOfOrNull { it.size } ?: 0
             return videos.filterNot {
                 Regex("\\bsample\\b", RegexOption.IGNORE_CASE).containsMatchIn(it.name.replace('.', ' ')) && it.size < biggest / 4

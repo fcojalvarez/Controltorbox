@@ -48,6 +48,16 @@ class EpisodesTest {
         assertEquals(listOf(1L, 3L), item.videoFiles.map { it.id })
     }
 
+    @Test fun videoByMimetypeWhenNameHasNoExtension() {
+        val item = TorboxItem(Kind.TORRENT, 1, "Show.S01", 0, null, "", true, listOf(
+            TorboxFile(1, "Show/Episodio 1", "Episodio 1", 10, "video/x-matroska"),
+            TorboxFile(2, "Show/Episodio 2", "Episodio 2", 10, "video/mp4"),
+            TorboxFile(3, "Show/notas", "notas", 10, "text/plain"),
+        ))
+        assertEquals(listOf(1L, 2L), item.videoFiles.map { it.id })
+        assertEquals(true, item.mainVideo != null)
+    }
+
     @Test fun storeRoundTripWithEpisodes() {
         val prefs = MemoryPrefs()
         val ctx = object : ContextWrapper(null) {

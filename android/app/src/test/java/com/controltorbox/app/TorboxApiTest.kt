@@ -29,7 +29,7 @@ class TorboxApiTest {
                 return when (path) {
                     "torrents/mylist" -> ok("""[{"id":1,"name":"Movie.2023.Castellano","size":100,"hash":"abc",
                         "created_at":"2026-11-01T10:00:00Z","download_state":"completed",
-                        "files":[{"id":10,"name":"Movie/m.mkv","short_name":"m.mkv","size":100}]}]""")
+                        "files":[{"id":10,"name":"Movie/m.mkv","short_name":"m.mkv","size":100,"mimetype":"video/x-matroska"}]}]""")
                     "usenet/mylist" -> ok("[]")
                     "webdl/mylist" -> MockResponse().setResponseCode(500).setBody("""{"success":false,"detail":"caído"}""")
                     "torrents/controltorrent" -> ok("null")
@@ -55,6 +55,7 @@ class TorboxApiTest {
         assertEquals("Movie.2023.Castellano", it.name)
         assertEquals("2026-11-01T10:00:00Z", it.createdAt)
         assertEquals("m.mkv", it.mainVideo!!.displayName)
+        assertEquals("video/x-matroska", it.files.single().mimetype)
         assertTrue(it.downloadFinished)
         assertEquals(1, errors.size)
         assertTrue(errors.single().contains("caído"))

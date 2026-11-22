@@ -43,8 +43,7 @@ object Language {
     }
 
     fun pickMainVideo(files: List<TorboxFile>): TorboxFile? =
-        files.filter { isVideo(it.name.ifBlank { it.shortName }) || isVideo(it.shortName) }
-            .maxByOrNull { it.size }
+        files.filter { it.isVideo }.maxByOrNull { it.size }
 
     fun isSpanishCode(code: String): Boolean {
         val c = code.trim().lowercase()

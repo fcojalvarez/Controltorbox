@@ -236,6 +236,19 @@ fun DetailContent(
                                 )
                             }
                             else -> {
+                                // Analizada con una versión anterior (solo un episodio): invitar a comprobarlos todos.
+                                if (episodes.isEmpty() && episodeCount > 1) {
+                                    Column(
+                                        Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.accentSoft).padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Text(
+                                            "Solo se comprobó un episodio. Comprueba los $episodeCount para saber si todos tienen español.",
+                                            fontSize = 13.sp, color = c.text,
+                                        )
+                                        PillButton("Comprobar los $episodeCount episodios", onLoadTracks, icon = Ic.Wave)
+                                    }
+                                }
                                 if (episodes.isNotEmpty()) {
                                     EpisodePicker(episodes, currentEp?.fileId, onSelectEpisode, summary = null)
                                 }
@@ -262,6 +275,19 @@ fun DetailContent(
                             }
                         }
                         error?.let { Text(it, color = c.orange, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
+                    }
+                }
+            } else {
+                // Antes no se mostraba nada y no se entendía por qué.
+                AppCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Pistas de audio", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = c.text)
+                        Text(
+                            if (item.files.isEmpty()) "TorBox no ha enviado la lista de archivos de este elemento (puede que aún se esté descargando)."
+                            else "Ninguno de sus ${item.files.size} archivos es un vídeo que se pueda leer: " +
+                                item.files.take(3).joinToString(", ") { it.displayName } + if (item.files.size > 3) "…" else ".",
+                            fontSize = 13.sp, color = c.chipText,
+                        )
                     }
                 }
             }
