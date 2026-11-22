@@ -1,6 +1,8 @@
 package com.controltorbox.app
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -14,7 +16,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
-import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
 /** Paleta del rediseño (la del mock), con variante oscura. */
@@ -102,10 +103,8 @@ object Ic {
 
     val Home = stroke("home", "M3 11l9-8 9 8", "M5 10v10h14V10")
     val Library = stroke("library", "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M3 9h18", "M8 4v5", "M16 4v5")
-    val Settings = stroke(
-        "settings", "M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0z", "M12 2v3", "M12 19v3", "M4.2 4.2l2.1 2.1", "M17.7 17.7l2.1 2.1",
-        "M2 12h3", "M19 12h3", "M4.2 19.8l2.1-2.1", "M17.7 6.3l2.1-2.1",
-    )
+    /** Engranaje de Material (el dibujo anterior parecía un sol). */
+    val Settings: ImageVector = Icons.Outlined.Settings
     val Refresh = stroke("refresh", "M21 12a9 9 0 1 1-3-6.7", "M21 3v6h-6")
     val Back = stroke("back", "M15 6l-6 6 6 6")
     val Chevron = stroke("chevron", "M9 6l6 6-6 6")
