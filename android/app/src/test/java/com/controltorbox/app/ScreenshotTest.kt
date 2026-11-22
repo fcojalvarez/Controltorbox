@@ -36,9 +36,10 @@ class ScreenshotTest {
         item(Kind.USENET, 10, "The.Bear.S03E02.720p.HDTV", 1.2, "2026-11-03T10:00:00Z"),
     )
 
-    private fun vm(): MainViewModel {
+    private fun vm(update: UpdateInfo? = null): MainViewModel {
         val app = TestApp(paparazzi.context)
         Store(app).token = "token-de-prueba-9f2a"
+        Store(app).availableUpdate = update
         return MainViewModel(app).also { it.loadItems(sample) }
     }
 
@@ -49,6 +50,11 @@ class ScreenshotTest {
 
     @Test fun lista() {
         val vm = vm()
+        paparazzi.snapshot { Screen(vm) }
+    }
+
+    @Test fun actualizacion() {
+        val vm = vm(UpdateInfo(7, "1.0.7", "https://example/Controltorbox.apk"))
         paparazzi.snapshot { Screen(vm) }
     }
 

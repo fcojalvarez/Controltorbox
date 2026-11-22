@@ -46,18 +46,22 @@ jobs:
         run: |
           ./gradlew assembleRelease --console=plain
           cp app/build/outputs/apk/release/app-release.apk ../Controltorbox.apk
+          # La app consulta este archivo una vez al día para saber si hay versión nueva.
+          printf '{"versionCode": %s, "versionName": "%s", "apk": "Controltorbox.apk"}\n' "$VERSION_CODE" "$VERSION_NAME" > ../version.json
 
       - uses: actions/upload-artifact@v4
         with:
           name: Controltorbox-apk
-          path: Controltorbox.apk
+          path: |
+            Controltorbox.apk
+            version.json
 
       - name: Publicar en «Releases»
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete android-latest --yes --cleanup-tag || true
-          gh release create android-latest Controltorbox.apk \
+          gh release create android-latest Controltorbox.apk version.json \
             --title "App Android (última versión)" \
             --notes "Versión 1.0.${{ github.run_number }} compilada a partir de ${{ github.sha }}. Descarga Controltorbox.apk desde el móvil e instálalo." \
             --target "${{ github.sha }}"

@@ -35,10 +35,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         Notifications.createChannel(this)
         handleIntent(intent)
-        if (vm.store.token.isNotBlank()) {
-            MonitorWorker.schedule(this, vm.store.alertSettings.intervalMinutes)
-            askNotificationPermission()
-        }
+        MonitorWorker.schedule(this)
+        if (vm.store.token.isNotBlank()) askNotificationPermission()
         setContent {
             AppTheme {
                 val state by vm.state.collectAsStateWithLifecycle()
@@ -72,6 +70,7 @@ class MainActivity : ComponentActivity() {
         when (intent?.getStringExtra(EXTRA_FILTER)) {
             FILTER_NO_ES -> pendingFilter.value = AudioFilter.NOT_ES
             FILTER_DUPS -> pendingFilter.value = AudioFilter.DUPS
+            SHOW_UPDATE -> vm.reloadUpdate()
         }
     }
 
@@ -85,6 +84,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_FILTER = "filter"
         const val FILTER_NO_ES = "no_es"
         const val FILTER_DUPS = "dups"
+        const val SHOW_UPDATE = "update"
     }
 }
 

@@ -6,7 +6,7 @@ data class AlertSettings(
     val notifyDuplicates: Boolean = true,
     val notifyStorage: Boolean = true,
     val storageLimitGb: Int = 500,
-    val intervalMinutes: Int = 60,
+    val notifyUpdates: Boolean = true,
 )
 
 /** Lo que recordamos entre comprobaciones. */
@@ -30,6 +30,12 @@ sealed class Alert {
         override val id = 1002
         override val title = if (pairs.size == 1) "Has añadido un duplicado" else "Has añadido ${pairs.size} duplicados"
         override val text = pairs.joinToString("\n") { (item, label) -> "• ${item.name} (ya tenías «$label»)" }
+    }
+
+    data class Update(val info: UpdateInfo) : Alert() {
+        override val id = 1004
+        override val title = "Nueva versión de Controltorbox"
+        override val text = "La versión ${info.versionName} está disponible. Toca para actualizar."
     }
 
     data class Storage(val usedBytes: Long, val limitGb: Int) : Alert() {

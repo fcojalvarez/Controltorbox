@@ -27,21 +27,38 @@ class MonitorWorker(context: Context, params: WorkerParameters) : CoroutineWorke
 
     override suspend fun doWork(): Result {
         val store = Store(applicationContext)
-        if (store.token.isBlank()) return Result.success()
-        val items = try {
-            TorboxApi(store.token).listAll().first
+        val settings = store.alertSettings
+        var failed = false
+
+        // 1) Nueva versión de la app (no necesita token).
+        try {
+            val update = Updater().check(BuildConfig.VERSION_CODE)
+            store.availableUpdate = update
+            if (update != null && settings.notifyUpdates && store.notifiedUpdateCode < update.versionCode) {
+                Notifications.show(applicationContext, Alert.Update(update))
+                store.notifiedUpdateCode = update.versionCode
+            }
         } catch (e: TorboxException) {
-            return if (runAttemptCount < 2) Result.retry() else Result.success()
+            failed = true
         }
-        val analyses = store.analyses()
-        val manual = store.manualMarks()
-        val (alerts, state) = Monitor.check(store.monitorState, items, store.alertSettings) {
-            store.statusOf(it, analyses, manual).first
+
+        // 2) TorBox: nuevos sin español, duplicados y espacio.
+        if (store.token.isNotBlank()) {
+            try {
+                val items = TorboxApi(store.token).listAll().first
+                val analyses = store.analyses()
+                val manual = store.manualMarks()
+                val (alerts, state) = Monitor.check(store.monitorState, items, settings) {
+                    store.statusOf(it, analyses, manual).first
+                }
+                store.monitorState = state
+                alerts.forEach { Notifications.show(applicationContext, it) }
+            } catch (e: TorboxException) {
+                failed = true
+            }
         }
-        store.monitorState = state
         store.lastCheck = System.currentTimeMillis()
-        alerts.forEach { Notifications.show(applicationContext, it) }
-        return Result.success()
+        return if (failed && runAttemptCount < 2) Result.retry() else Result.success()
     }
 
     companion object {
@@ -49,16 +66,13 @@ class MonitorWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         private const val NOW = "controltorbox-monitor-now"
         private val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
-        /** Programa (o reprograma) la comprobación periódica. */
-        fun schedule(context: Context, intervalMinutes: Int, replace: Boolean = false) {
-            val request = PeriodicWorkRequestBuilder<MonitorWorker>(intervalMinutes.coerceAtLeast(15).toLong(), TimeUnit.MINUTES)
+        /** Programa la comprobación diaria (todas las comprobaciones, una vez al día). */
+        fun schedule(context: Context) {
+            val request = PeriodicWorkRequestBuilder<MonitorWorker>(1, TimeUnit.DAYS)
                 .setConstraints(constraints)
+                .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.MINUTES)
                 .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                PERIODIC,
-                if (replace) ExistingPeriodicWorkPolicy.UPDATE else ExistingPeriodicWorkPolicy.KEEP,
-                request,
-            )
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
         }
 
         fun runNow(context: Context) {
@@ -74,7 +88,7 @@ object Notifications {
     fun createChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(CHANNEL, "Avisos de TorBox", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Nuevos elementos sin español, duplicados y espacio ocupado"
+                description = "Nuevos elementos sin español, duplicados, espacio ocupado y nuevas versiones"
             }
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
@@ -90,6 +104,7 @@ object Notifications {
         val filter = when (alert) {
             is Alert.NoSpanish -> MainActivity.FILTER_NO_ES
             is Alert.Duplicate -> MainActivity.FILTER_DUPS
+            is Alert.Update -> MainActivity.SHOW_UPDATE
             is Alert.Storage -> null
         }
         val intent = Intent(context, MainActivity::class.java)

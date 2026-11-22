@@ -22,14 +22,14 @@ class Store(context: Context) {
             notifyDuplicates = prefs.getBoolean("notify_dups", true),
             notifyStorage = prefs.getBoolean("notify_storage", true),
             storageLimitGb = prefs.getInt("storage_limit_gb", 500),
-            intervalMinutes = prefs.getInt("interval_min", 60),
+            notifyUpdates = prefs.getBoolean("notify_updates", true),
         )
         set(s) = prefs.edit()
             .putBoolean("notify_no_es", s.notifyNoSpanish)
             .putBoolean("notify_dups", s.notifyDuplicates)
             .putBoolean("notify_storage", s.notifyStorage)
             .putInt("storage_limit_gb", s.storageLimitGb)
-            .putInt("interval_min", s.intervalMinutes)
+            .putBoolean("notify_updates", s.notifyUpdates)
             .apply()
 
     var monitorState: MonitorState?
@@ -43,6 +43,24 @@ class Store(context: Context) {
             else e.putStringSet("known_keys", s.knownKeys).putBoolean("storage_alerted", s.storageAlerted)
             e.apply()
         }
+
+    /** Última versión nueva encontrada (si la hay) y la última de la que ya se avisó. */
+    var availableUpdate: UpdateInfo?
+        get() {
+            val code = prefs.getInt("update_code", -1)
+            if (code <= BuildConfig.VERSION_CODE) return null
+            return UpdateInfo(code, prefs.getString("update_name", "") ?: "", prefs.getString("update_url", "") ?: "")
+        }
+        set(u) {
+            val e = prefs.edit()
+            if (u == null) e.remove("update_code").remove("update_name").remove("update_url")
+            else e.putInt("update_code", u.versionCode).putString("update_name", u.versionName).putString("update_url", u.apkUrl)
+            e.apply()
+        }
+
+    var notifiedUpdateCode: Int
+        get() = prefs.getInt("notified_update_code", -1)
+        set(v) = prefs.edit().putInt("notified_update_code", v).apply()
 
     var lastCheck: Long
         get() = prefs.getLong("last_check", 0)

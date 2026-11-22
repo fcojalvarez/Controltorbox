@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,7 +49,6 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
-private val INTERVALS = listOf(15 to "Cada 15 min", 30 to "Cada 30 min", 60 to "Cada hora", 180 to "Cada 3 horas", 360 to "Cada 6 horas")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +62,8 @@ fun SettingsScreen(vm: MainViewModel, canGoBack: Boolean, onBack: () -> Unit, on
     var tokenError by remember { mutableStateOf<String?>(null) }
     var settings by remember { mutableStateOf(store.alertSettings) }
     var limitText by remember { mutableStateOf(settings.storageLimitGb.toString()) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateMsg by remember { mutableStateOf<String?>(null) }
     val current = store.token
 
     fun update(s: AlertSettings) { settings = s; vm.saveAlertSettings(s) }
@@ -124,7 +126,7 @@ fun SettingsScreen(vm: MainViewModel, canGoBack: Boolean, onBack: () -> Unit, on
             HorizontalDivider()
             Text("Notificaciones", fontWeight = FontWeight.SemiBold)
             Text(
-                "La app comprueba tu TorBox en segundo plano y te avisa solo de lo nuevo.",
+                "Una vez al día la app comprueba tu TorBox y si hay versión nueva, y te avisa solo de lo nuevo.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (!Notifications.canNotify(context)) {
@@ -146,9 +148,9 @@ fun SettingsScreen(vm: MainViewModel, canGoBack: Boolean, onBack: () -> Unit, on
                     modifier = Modifier.width(160.dp),
                 )
             }
-            IntervalMenu(settings.intervalMinutes) { update(settings.copy(intervalMinutes = it)) }
+            SwitchRow("Nueva versión de la app", settings.notifyUpdates) { update(settings.copy(notifyUpdates = it)) }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(enabled = current.isNotBlank(), onClick = { MonitorWorker.runNow(context) }) { Text("Comprobar ahora") }
+                OutlinedButton(onClick = { MonitorWorker.runNow(context) }) { Text("Comprobar ahora") }
                 Spacer(Modifier.width(12.dp))
                 val last = store.lastCheck
                 Text(
@@ -163,7 +165,21 @@ fun SettingsScreen(vm: MainViewModel, canGoBack: Boolean, onBack: () -> Unit, on
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             HorizontalDivider()
-            Text("Versión ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Actualizaciones", fontWeight = FontWeight.SemiBold)
+            Text("Versión instalada: ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val updateState by vm.state.collectAsState()
+            updateState.update?.let { u ->
+                Button(onClick = vm::installUpdate, enabled = updateState.updateProgress == null) {
+                    Text(updateState.updateProgress?.let { "Descargando… ${(it * 100).toInt()} %" } ?: "Actualizar a la versión ${u.versionName}")
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(enabled = !checkingUpdate, onClick = {
+                    checkingUpdate = true
+                    scope.launch { updateMsg = vm.checkForUpdate(); checkingUpdate = false }
+                }) { Text(if (checkingUpdate) "Buscando…" else "Buscar actualizaciones") }
+            }
+            updateMsg?.let { Text(it, fontSize = 13.sp) }
         }
     }
 }
@@ -173,21 +189,5 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 14.sp)
         Switch(checked = checked, onCheckedChange = onChange)
-    }
-}
-
-@Composable
-private fun IntervalMenu(minutes: Int, onChange: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Comprobar", Modifier.weight(1f), fontSize = 14.sp)
-        Box {
-            OutlinedButton(onClick = { open = true }) {
-                Text(INTERVALS.firstOrNull { it.first == minutes }?.second ?: "Cada $minutes min")
-            }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                INTERVALS.forEach { (m, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { onChange(m); open = false }) }
-            }
-        }
     }
 }

@@ -101,6 +101,7 @@ fun MainScreen(vm: MainViewModel, state: UiState, onOpenSettings: () -> Unit) {
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                state.update?.let { u -> item(key = "update") { UpdateBanner(u, state.updateProgress, vm::installUpdate) } }
                 item { Header(state, vm) }
                 var lastGroup: String? = null
                 val rows = state.visible
@@ -176,6 +177,26 @@ fun MainScreen(vm: MainViewModel, state: UiState, onOpenSettings: () -> Unit) {
             text = { Text(err) },
             confirmButton = { TextButton(onClick = { vm.clearMessage() }) { Text("Aceptar") } },
         )
+    }
+}
+
+@Composable
+private fun UpdateBanner(info: UpdateInfo, progress: Float?, onUpdate: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Nueva versión disponible", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(
+                    progress?.let { "Descargando… ${(it * 100).toInt()} %" } ?: "Versión ${info.versionName}",
+                    fontSize = 12.sp,
+                )
+            }
+            Button(onClick = onUpdate, enabled = progress == null) { Text("Actualizar") }
+        }
+        progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
     }
 }
 

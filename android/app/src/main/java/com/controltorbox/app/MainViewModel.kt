@@ -50,6 +50,8 @@ data class UiState(
     val sort: SortOrder = SortOrder.SIZE_DESC,
     val onlyVideo: Boolean = true,
     val analyzing: String? = null,
+    val update: UpdateInfo? = null,
+    val updateProgress: Float? = null,
 ) {
     val visible: List<ItemRow> by lazy { computeVisible() }
     val totalSize: Long get() = rows.sumOf { it.item.totalSize }
@@ -99,7 +101,9 @@ data class UiState(
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     val store = Store(app)
     private var items: List<TorboxItem> = emptyList()
-    private val _state = MutableStateFlow(UiState(hasToken = store.token.isNotBlank(), sort = SortOrder.fromKey(store.sort)))
+    private val _state = MutableStateFlow(
+        UiState(hasToken = store.token.isNotBlank(), sort = SortOrder.fromKey(store.sort), update = store.availableUpdate),
+    )
     val state: StateFlow<UiState> = _state
 
     private fun api() = TorboxApi(store.token)
@@ -267,7 +271,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         store.token = token.trim()
         store.monitorState = null
         _state.update { it.copy(hasToken = true) }
-        MonitorWorker.schedule(getApplication(), store.alertSettings.intervalMinutes, replace = true)
         refresh()
     }
 
@@ -279,8 +282,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveAlertSettings(s: AlertSettings) {
-        val old = store.alertSettings
         store.alertSettings = s
-        if (old.intervalMinutes != s.intervalMinutes) MonitorWorker.schedule(getApplication(), s.intervalMinutes, replace = true)
+    }
+
+    fun reloadUpdate() = _state.update { it.copy(update = store.availableUpdate) }
+
+    /** Comprobación manual de actualizaciones (botón en Ajustes). Devuelve un texto para mostrar. */
+    suspend fun checkForUpdate(): String = try {
+        val u = Updater().check(BuildConfig.VERSION_CODE)
+        store.availableUpdate = u
+        reloadUpdate()
+        if (u == null) "Tienes la última versión (${BuildConfig.VERSION_NAME})." else "Hay una versión nueva: ${u.versionName}."
+    } catch (e: TorboxException) {
+        e.message ?: "No se pudo comprobar"
+    }
+
+    /** Descarga la actualización y abre el instalador de Android. */
+    fun installUpdate() {
+        val info = _state.value.update ?: return
+        val app = getApplication<Application>()
+        if (!Updater.canInstall(app)) {
+            Updater.openInstallPermission(app)
+            _state.update { it.copy(message = "Permite «Instalar apps desconocidas» para Controltorbox y vuelve a pulsar Actualizar.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(updateProgress = 0f) }
+            try {
+                val apk = Updater().download(app, info) { p -> _state.update { it.copy(updateProgress = p) } }
+                Updater.install(app, apk)
+            } catch (e: TorboxException) {
+                _state.update { it.copy(error = e.message) }
+            } finally {
+                _state.update { it.copy(updateProgress = null) }
+            }
+        }
     }
 }

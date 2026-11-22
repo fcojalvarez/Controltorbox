@@ -14,13 +14,17 @@ TorBox, sin necesidad de tu PC ni de ningún servidor.
 descarga `Controltorbox.apk` e instálalo (Android pedirá permitir instalar apps de esa
 fuente). Cada vez que se sube un cambio a `android/`, GitHub compila una versión nueva
 en esa misma página; se instala encima de la anterior sin perder el token ni los ajustes.
+La propia app detecta las versiones nuevas y se actualiza con un botón (**Actualizar**);
+Android pide confirmar la instalación y, la primera vez, permitir «Instalar apps desconocidas».
 
 Incluye lo mismo que la web (lista, filtros, orden, duplicados, análisis y escucha de pistas,
-marcar a mano y eliminar) y además **notificaciones**, comprobando TorBox cada 15 min – 6 h:
+marcar a mano y eliminar) y además **notificaciones**. Todas las comprobaciones se hacen
+**una vez al día** (y cuando pulsas *Comprobar ahora* en Ajustes):
 
 - **Nuevo sin español**: se ha añadido algo cuyo nombre no indica audio en español.
 - **Nuevo duplicado**: se ha añadido algo que ya tenías.
 - **Espacio ocupado**: el total supera el límite que elijas (avisa al cruzarlo, no en cada comprobación).
+- **Nueva versión de la app**: hay una versión más reciente publicada en GitHub.
 
 Notas:
 - El análisis y la escucha usan el reproductor de Android: no descargan la película entera.
