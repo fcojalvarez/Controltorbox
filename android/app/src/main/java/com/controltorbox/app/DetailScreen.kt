@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,13 +74,15 @@ fun DetailScreen(vm: MainViewModel, row: ItemRow, nav: Nav) {
     val item = row.item
     val preview = remember { AudioProbe.Preview(context) }
     var loadingTracks by remember { mutableStateOf(false) }
+    var loadingText by remember { mutableStateOf<String?>(null) }
+    var selectedEp by remember { mutableStateOf<Long?>(null) }
+    val links = remember { mutableMapOf<Long?, String>() }
     var error by remember { mutableStateOf<String?>(null) }
     var position by remember { mutableFloatStateOf(0.15f) }
     var durationMs by remember { mutableStateOf<Long?>(null) }
     var playing by remember { mutableIntStateOf(-1) }
     var currentMs by remember { mutableLongStateOf(0L) }
     var clipStart by remember { mutableLongStateOf(0L) }
-    var link by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
@@ -107,17 +110,29 @@ fun DetailScreen(vm: MainViewModel, row: ItemRow, nav: Nav) {
     }
 
     fun loadTracks() {
-        loadingTracks = true; error = null
+        loadingTracks = true; error = null; loadingText = null
+        preview.stop(); playing = -1
         scope.launch {
-            try { vm.analyze(item) } catch (e: Exception) { error = e.message } finally { loadingTracks = false }
+            try {
+                vm.analyze(item) { ep, n -> if (n > 1) loadingText = "Leyendo episodio $ep de $n…" }
+            } catch (e: Exception) {
+                error = e.message
+            } finally {
+                loadingTracks = false; loadingText = null
+            }
         }
     }
+
+    // Episodio cuyas pistas se muestran y se escuchan (en series).
+    val episodes = row.analysis?.episodes.orEmpty()
+    val currentEp = episodes.firstOrNull { it.fileId == selectedEp } ?: episodes.firstOrNull()
 
     fun start(index: Int) {
         error = null
         scope.launch {
             try {
-                val url = link ?: vm.linkFor(item).also { link = it }
+                val fileId = currentEp?.fileId
+                val url = links[fileId] ?: vm.linkFor(item, fileId).also { links[fileId] = it }
                 val start = durationMs?.let { (it * position).toLong() } ?: (position * 3_600_000).toLong().coerceAtMost(600_000)
                 clipStart = start
                 currentMs = start
@@ -134,6 +149,9 @@ fun DetailScreen(vm: MainViewModel, row: ItemRow, nav: Nav) {
     DetailContent(
         row = row,
         loadingTracks = loadingTracks,
+        loadingText = loadingText,
+        selectedEpisode = currentEp?.fileId,
+        onSelectEpisode = { id -> if (id != currentEp?.fileId) { preview.stop(); playing = -1; durationMs = null; selectedEp = id } },
         error = error,
         playback = PlaybackUi(position, durationMs, playing, currentMs, clipStart),
         onBack = { preview.stop(); nav.back() },
@@ -164,10 +182,16 @@ fun DetailContent(
     onToggle: (Int) -> Unit,
     onManual: (AudioStatus?) -> Unit,
     onDelete: () -> Unit,
+    loadingText: String? = null,
+    selectedEpisode: Long? = null,
+    onSelectEpisode: (Long) -> Unit = {},
 ) {
     val c = C.c
     val item = row.item
-    val tracks = row.analysis?.tracks?.takeIf { it.isNotEmpty() }
+    val episodes = row.analysis?.episodes.orEmpty()
+    val currentEp = episodes.firstOrNull { it.fileId == selectedEpisode } ?: episodes.firstOrNull()
+    val tracks = (currentEp?.tracks ?: row.analysis?.tracks)?.takeIf { it.isNotEmpty() || currentEp != null }
+    val episodeCount = item.videoFiles.size
     var showFiles by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding()) {
@@ -198,13 +222,26 @@ fun DetailContent(
                         when {
                             loadingTracks -> Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Text("  Leyendo el archivo…", fontSize = 13.sp, color = c.chipText)
+                                Text("  ${loadingText ?: "Leyendo el archivo…"}", fontSize = 13.sp, color = c.chipText)
                             }
                             tracks == null -> Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("Lee las pistas del archivo para saber qué idiomas tiene y escucharlas.", fontSize = 13.sp, color = c.chipText)
-                                PillButton("Leer pistas de audio", onLoadTracks, icon = Ic.Wave)
+                                Text(
+                                    if (episodeCount > 1) "Lee las pistas de cada episodio para saber si todos tienen español."
+                                    else "Lee las pistas del archivo para saber qué idiomas tiene y escucharlas.",
+                                    fontSize = 13.sp, color = c.chipText,
+                                )
+                                PillButton(
+                                    if (episodeCount > 1) "Leer los $episodeCount episodios" else "Leer pistas de audio",
+                                    onLoadTracks, icon = Ic.Wave,
+                                )
                             }
                             else -> {
+                                if (episodes.isNotEmpty()) {
+                                    EpisodePicker(episodes, currentEp?.fileId, onSelectEpisode, summary = null)
+                                }
+                                currentEp?.error?.let {
+                                    Text("No se pudo leer este episodio: $it", fontSize = 12.sp, color = c.orange, modifier = Modifier.padding(top = 8.dp))
+                                }
                                 Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text("Escuchar desde ", fontSize = 12.sp, color = c.chipText)
                                     Text(
@@ -303,7 +340,8 @@ private fun StatusBanner(row: ItemRow) {
         AudioStatus.UNKNOWN -> Triple(c.chip, c.chipText, "Idioma sin comprobar")
     }
     val sub = when (row.source) {
-        AudioSource.ANALYZED -> "Comprobado leyendo las pistas del archivo"
+        AudioSource.ANALYZED -> row.analysis?.episodeSummary?.let { "Comprobado episodio a episodio: ${it.replaceFirstChar { ch -> ch.lowercase() }}" }
+            ?: "Comprobado leyendo las pistas del archivo"
         AudioSource.MANUAL -> "Lo marcaste tú"
         AudioSource.NAME -> if (row.status == AudioStatus.UNKNOWN) "El nombre no lo dice: lee las pistas o escúchalo" else "Según el nombre del archivo"
     }
@@ -374,6 +412,34 @@ private fun TrackRow(t: AudioTrack, playback: PlaybackUi, onToggle: (Int) -> Uni
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp), color = c.green, trackColor = c.greenSoft,
                 )
                 Text(Format.time((startMs + CLIP_MS) / 1000), fontSize = 11.sp, color = c.chipText)
+            }
+        }
+    }
+}
+
+/** Fila de episodios con su estado; el seleccionado es el que se escucha. */
+@Composable
+private fun EpisodePicker(episodes: List<EpisodeAnalysis>, selected: Long?, onSelect: (Long) -> Unit, summary: String?) {
+    val c = C.c
+    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        summary?.let {
+            Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (episodes.any { e -> e.status == AudioStatus.NO_ES }) c.orange else c.chipText)
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            episodes.forEach { e ->
+                val sel = e.fileId == selected
+                val dot = when (e.status) { AudioStatus.ES -> c.green; AudioStatus.NO_ES -> c.orange; AudioStatus.UNKNOWN -> c.faint }
+                Row(
+                    Modifier.clip(RoundedCornerShape(16.dp))
+                        .background(if (sel) c.text else c.surface)
+                        .border(1.dp, if (sel) c.text else c.borderStrong, RoundedCornerShape(16.dp))
+                        .clickable(role = Role.Tab) { onSelect(e.fileId) }
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                    Text("  ${e.label}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (sel) c.surface else c.text)
+                }
             }
         }
     }

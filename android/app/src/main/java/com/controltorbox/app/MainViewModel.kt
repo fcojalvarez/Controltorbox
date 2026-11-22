@@ -322,16 +322,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // -- Audio --------------------------------------------------------------------
-    suspend fun linkFor(item: TorboxItem): String {
-        val file = item.mainVideo ?: throw TorboxException("Este elemento no tiene archivo de vídeo.")
-        return api().downloadLink(item.kind, item.id, file.id)
+    suspend fun linkFor(item: TorboxItem, fileId: Long? = null): String {
+        val id = fileId ?: item.mainVideo?.id ?: throw TorboxException("Este elemento no tiene archivo de vídeo.")
+        return api().downloadLink(item.kind, item.id, id)
     }
 
-    /** Lee las pistas de audio reales de un elemento y guarda el resultado. */
-    suspend fun analyze(item: TorboxItem): Analysis {
-        val tracks = AudioProbe.probe(getApplication(), linkFor(item))
-        val langs = tracks.map { it.language }
-        val analysis = Analysis(Language.classify(langs), langs, tracks)
+    /**
+     * Lee las pistas de audio reales y guarda el resultado. En una serie con varios
+     * episodios se lee cada uno; [onProgress] recibe (episodio actual, total).
+     */
+    suspend fun analyze(item: TorboxItem, onProgress: (Int, Int) -> Unit = { _, _ -> }): Analysis {
+        val videos = item.videoFiles
+        val analysis = if (videos.size <= 1) {
+            onProgress(1, 1)
+            val tracks = AudioProbe.probe(getApplication(), linkFor(item))
+            val langs = tracks.map { it.language }
+            Analysis(Language.classify(langs), langs, tracks)
+        } else {
+            val episodes = videos.mapIndexed { i, f ->
+                onProgress(i + 1, videos.size)
+                try {
+                    val tracks = AudioProbe.probe(getApplication(), linkFor(item, f.id))
+                    val langs = tracks.map { it.language }
+                    EpisodeAnalysis(f.id, f.displayName, Language.classify(langs), langs, tracks)
+                } catch (e: Exception) {
+                    EpisodeAnalysis(f.id, f.displayName, AudioStatus.UNKNOWN, emptyList(), emptyList(), e.message ?: "error")
+                }
+            }
+            if (episodes.all { it.error != null }) throw TorboxException("No se pudo leer ningún episodio: ${episodes.first().error}")
+            Analysis(
+                Language.combine(episodes.map { it.status }),
+                episodes.flatMap { it.languages }.distinct(),
+                episodes.firstOrNull { it.error == null }?.tracks.orEmpty(),
+                episodes,
+            )
+        }
         store.saveAnalysis(item.key, analysis)
         rebuildRows()
         return analysis
@@ -347,7 +372,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             targets.forEachIndexed { i, item ->
                 _state.update { it.copy(analyzing = "Analizando ${i + 1} de ${targets.size}…") }
                 try {
-                    if (analyze(item).status == AudioStatus.ES) withEs++
+                    val a = analyze(item) { ep, n ->
+                        if (n > 1) _state.update { it.copy(analyzing = "Analizando ${i + 1} de ${targets.size} · episodio $ep de $n…") }
+                    }
+                    if (a.status == AudioStatus.ES) withEs++
                 } catch (e: Exception) {
                     errors++
                 }

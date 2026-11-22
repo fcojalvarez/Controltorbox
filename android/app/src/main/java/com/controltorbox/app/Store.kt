@@ -91,24 +91,46 @@ class Store(context: Context) {
         JSONObject()
     }
 
+    private fun tracksFrom(arr: JSONArray?): List<AudioTrack> {
+        arr ?: return emptyList()
+        return (0 until arr.length()).map { i ->
+            val t = arr.getJSONObject(i)
+            AudioTrack(
+                t.getInt("index"), t.optString("language"), t.optString("label"),
+                t.optString("codec"), t.optInt("channels"), t.optBoolean("supported", true),
+            )
+        }
+    }
+
+    private fun tracksJson(tracks: List<AudioTrack>) = JSONArray().apply {
+        tracks.forEach { t ->
+            put(
+                JSONObject().put("index", t.index).put("language", t.language).put("label", t.label)
+                    .put("codec", t.codec).put("channels", t.channels).put("supported", t.supported),
+            )
+        }
+    }
+
+    private fun strings(arr: JSONArray?) = arr?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
+
     fun analyses(): Map<String, Analysis> {
         val o = readObj("analyses")
         return o.keys().asSequence().mapNotNull { k ->
             try {
                 val a = o.getJSONObject(k)
-                val tracksArr = a.optJSONArray("tracks") ?: JSONArray()
-                val tracks = (0 until tracksArr.length()).map { i ->
-                    val t = tracksArr.getJSONObject(i)
-                    AudioTrack(
-                        t.getInt("index"), t.optString("language"), t.optString("label"),
-                        t.optString("codec"), t.optInt("channels"), t.optBoolean("supported", true),
-                    )
-                }
-                val langs = a.optJSONArray("languages") ?: JSONArray()
+                val eps = a.optJSONArray("episodes")?.let { arr ->
+                    (0 until arr.length()).map { i ->
+                        val e = arr.getJSONObject(i)
+                        EpisodeAnalysis(
+                            e.getLong("fileId"), e.optString("name"), AudioStatus.valueOf(e.getString("status")),
+                            strings(e.optJSONArray("languages")), tracksFrom(e.optJSONArray("tracks")),
+                            e.optString("error").takeIf { it.isNotBlank() },
+                        )
+                    }
+                } ?: emptyList()
                 k to Analysis(
-                    AudioStatus.valueOf(a.getString("status")),
-                    (0 until langs.length()).map { langs.getString(it) },
-                    tracks,
+                    AudioStatus.valueOf(a.getString("status")), strings(a.optJSONArray("languages")),
+                    tracksFrom(a.optJSONArray("tracks")), eps,
                 )
             } catch (e: Exception) {
                 null
@@ -118,14 +140,19 @@ class Store(context: Context) {
 
     fun saveAnalysis(key: String, a: Analysis) {
         val o = readObj("analyses")
-        val tracks = JSONArray()
-        a.tracks.forEach { t ->
-            tracks.put(
-                JSONObject().put("index", t.index).put("language", t.language).put("label", t.label)
-                    .put("codec", t.codec).put("channels", t.channels).put("supported", t.supported),
-            )
+        val json = JSONObject().put("status", a.status.name).put("languages", JSONArray(a.languages)).put("tracks", tracksJson(a.tracks))
+        if (a.episodes.isNotEmpty()) {
+            json.put("episodes", JSONArray().apply {
+                a.episodes.forEach { e ->
+                    put(
+                        JSONObject().put("fileId", e.fileId).put("name", e.name).put("status", e.status.name)
+                            .put("languages", JSONArray(e.languages)).put("tracks", tracksJson(e.tracks))
+                            .put("error", e.error ?: ""),
+                    )
+                }
+            })
         }
-        o.put(key, JSONObject().put("status", a.status.name).put("languages", JSONArray(a.languages)).put("tracks", tracks))
+        o.put(key, json)
         prefs.edit().putString("analyses", o.toString()).apply()
     }
 

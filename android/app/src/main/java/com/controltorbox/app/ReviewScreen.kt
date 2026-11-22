@@ -103,6 +103,7 @@ fun ReviewScreen(vm: MainViewModel, state: UiState, nav: Nav) {
 
 /** Por qué está en la lista, en una frase. */
 private fun reason(r: ItemRow, state: UiState): String {
+    r.analysis?.episodeSummary?.let { return it }
     val tracks = r.analysis?.tracks.orEmpty()
     if (tracks.isNotEmpty()) {
         return "Pistas: " + tracks.joinToString(" · ") { t ->

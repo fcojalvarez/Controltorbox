@@ -60,6 +60,17 @@ object Language {
         return AudioStatus.NO_ES
     }
 
+    /**
+     * Estado de una serie a partir de sus episodios: «Español» solo si todos lo tienen;
+     * «Sin español» si falta en alguno; si no, «sin comprobar».
+     */
+    fun combine(statuses: List<AudioStatus>): AudioStatus = when {
+        statuses.isEmpty() -> AudioStatus.UNKNOWN
+        statuses.all { it == AudioStatus.ES } -> AudioStatus.ES
+        statuses.any { it == AudioStatus.NO_ES } -> AudioStatus.NO_ES
+        else -> AudioStatus.UNKNOWN
+    }
+
     /** Si la pista no trae idioma pero el título lo dice («Castellano AC3»), lo usamos. */
     fun trackLanguage(language: String?, label: String?): String {
         val lang = (language ?: "").trim()

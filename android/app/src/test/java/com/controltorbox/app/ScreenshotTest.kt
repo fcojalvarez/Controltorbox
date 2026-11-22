@@ -121,6 +121,24 @@ class ScreenshotTest {
         }
     }
 
+    @Test fun ficha_serie() {
+        val vm = vm()
+        val es = AudioTrack(0, "spa", "Castellano", "E-AC3", 6, true)
+        val en = AudioTrack(1, "en", "", "E-AC3", 6, true)
+        vm.store.saveAnalysis("torrent:2", Analysis(AudioStatus.NO_ES, listOf("spa", "en"), listOf(es, en), listOf(
+            EpisodeAnalysis(20, "The.Bear.S03E01.mkv", AudioStatus.ES, listOf("spa", "en"), listOf(es, en)),
+            EpisodeAnalysis(21, "The.Bear.S03E02.mkv", AudioStatus.NO_ES, listOf("en"), listOf(en.copy(index = 0))),
+            EpisodeAnalysis(22, "The.Bear.S03E03.mkv", AudioStatus.ES, listOf("spa", "en"), listOf(es, en)),
+        )))
+        vm.rebuildRows()
+        val row = vm.state.value.row("torrent:2")!!
+        paparazzi.snapshot {
+            AppTheme {
+                DetailContent(row, false, null, PlaybackUi(), {}, {}, {}, {}, {}, {}, {}, selectedEpisode = 21)
+            }
+        }
+    }
+
     @Test fun ficha_sin_analizar() {
         val vm = vm()
         val row = vm.state.value.row("torrent:2")!!
