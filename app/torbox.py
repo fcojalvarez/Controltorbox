@@ -102,6 +102,12 @@ class TorboxClient:
         )
         self._unwrap(resp)
 
+    def account(self) -> dict:
+        """Plan de la cuenta y, si TorBox lo indica, su límite de almacenamiento en bytes."""
+        resp = self._client.get("/user/me", params={"settings": "false"})
+        data = self._unwrap(resp) or {}
+        return parse_account(data)
+
     def download_link(self, kind: str, item_id: int, file_id: int) -> str:
         k = KINDS[kind]
         resp = self._client.get(
@@ -117,3 +123,22 @@ class TorboxClient:
         if not isinstance(link, str) or not link:
             raise TorboxError("TorBox no devolvió un enlace de descarga.")
         return link
+
+
+PLAN_NAMES = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
+
+
+def parse_account(data: dict) -> dict:
+    """La API documentada no da el almacenamiento máximo; si la respuesta real trae un
+    campo numérico de almacenamiento y límite, se usa (en bytes, o en GB si es pequeño)."""
+    plan = data.get("plan")
+    plan = plan if isinstance(plan, int) else None
+    limit = None
+    for key, value in data.items():
+        k = key.lower()
+        about = "storage" in k or "space" in k or "quota" in k
+        is_limit = "limit" in k or "max" in k or "total" in k or "quota" in k
+        if about and is_limit and "used" not in k and isinstance(value, (int, float)) and value > 0:
+            limit = int(value) if value > 1e7 else int(value * 1024 ** 3)
+            break
+    return {"plan": plan, "plan_name": PLAN_NAMES.get(plan), "storage_limit": limit}

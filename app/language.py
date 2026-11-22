@@ -62,12 +62,49 @@ def is_video(file_name: str) -> bool:
     return any(name.endswith(ext) for ext in VIDEO_EXTS)
 
 
+def is_video_file(f: dict) -> bool:
+    """Vídeo por extensión o por el tipo que indica TorBox (p. ej. «video/x-matroska»)."""
+    return (
+        is_video(f.get("name") or "") or is_video(f.get("short_name") or "")
+        or str(f.get("mimetype") or "").lower().startswith("video/")
+    )
+
+
 def pick_main_video(files: list[dict]) -> dict | None:
     """Devuelve el archivo de vídeo más grande (el que suele importar)."""
-    videos = [f for f in files or [] if is_video(f.get("name") or f.get("short_name") or "")]
+    videos = [f for f in files or [] if is_video_file(f)]
     if not videos:
         return None
     return max(videos, key=lambda f: f.get("size") or 0)
+
+
+def video_files(files: list[dict]) -> list[dict]:
+    """Archivos de vídeo sin «samples», ordenados por nombre (los episodios de una temporada)."""
+    videos = [f for f in files or [] if is_video_file(f)]
+    if not videos:
+        return []
+    biggest = max(f.get("size") or 0 for f in videos)
+    sample = re.compile(r"\bsample\b", re.I)
+
+    def is_sample(f: dict) -> bool:
+        name = (f.get("name") or "").replace(".", " ")
+        return bool(sample.search(name)) and (f.get("size") or 0) < biggest / 4
+
+    def display(f: dict) -> str:
+        return (f.get("short_name") or (f.get("name") or "").rsplit("/", 1)[-1]).lower()
+
+    return sorted((f for f in videos if not is_sample(f)), key=display)
+
+
+def combine(statuses: list[str]) -> str:
+    """Estado de una serie: «es» solo si todos los episodios lo tienen; «no_es» si falta en alguno."""
+    if not statuses:
+        return UNKNOWN
+    if all(s == ES for s in statuses):
+        return ES
+    if any(s == NO_ES for s in statuses):
+        return NO_ES
+    return UNKNOWN
 
 
 def classify_audio_languages(languages: list[str]) -> str:

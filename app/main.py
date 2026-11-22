@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import language
+from . import titles
 from .duplicates import find_duplicates
 from .torbox import DEFAULT_BASE_URL, KINDS, TorboxClient, TorboxError
 
@@ -127,8 +128,9 @@ class AnalysisCache:
     def set(self, key: str, value: dict) -> None:
         """Guarda un análisis nuevo conservando la marca manual, si la hay."""
         with self._lock:
-            manual = (self._data.get(key) or {}).get("manual")
-            self._data[key] = {**value, **({"manual": manual} if manual else {})}
+            prev = self._data.get(key) or {}
+            keep = {k: prev[k] for k in ("manual", "kept") if prev.get(k)}
+            self._data[key] = {**value, **keep}
             self._save()
 
     def update(self, key: str, **fields) -> None:
@@ -210,6 +212,10 @@ class SettingsRequest(BaseModel):
     api_key: str = Field(min_length=1, max_length=512)
 
 
+class KeptRequest(BaseModel):
+    kept: bool
+
+
 class ManualStatusRequest(BaseModel):
     status: str | None = Field(default=None, pattern="^(es|no_es)$")
 
@@ -221,9 +227,29 @@ def _key(kind: str, item_id) -> str:
     return f"{kind}:{item_id}"
 
 
+def episode_summary(episodes: list[dict]) -> str | None:
+    """«Los 10 episodios con español», «2 de 10 episodios sin español»…"""
+    if not episodes:
+        return None
+    n = len(episodes)
+    no_es = sum(1 for e in episodes if e.get("status") == language.NO_ES)
+    unk = sum(1 for e in episodes if e.get("status") == language.UNKNOWN)
+    if no_es == 0 and unk == 0:
+        return f"Los {n} episodios con español"
+    if no_es == n:
+        return "Ningún episodio con español"
+    parts = []
+    if no_es:
+        parts.append(f"{no_es} de {n} episodios sin español")
+    if unk:
+        parts.append(f"{unk} sin poder leer")
+    return " · ".join(parts)
+
+
 def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
     files = raw.get("files") or []
     main = language.pick_main_video(files)
+    videos = language.video_files(files)
     main_name = (main or {}).get("short_name") or (main or {}).get("name") or ""
     name_guess = language.guess_from_name(raw.get("name") or "", main_name)
 
@@ -235,10 +261,22 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
     else:
         audio_status, source = name_guess, "nombre"
 
+    name = raw.get("name") or main_name or f"{kind} {raw.get('id')}"
+    episodes = analysis.get("episodes") or []
     return {
         "kind": kind,
         "id": raw.get("id"),
-        "name": raw.get("name") or main_name or f"{kind} {raw.get('id')}",
+        "name": name,
+        "title": titles.clean(name),
+        "quality": titles.quality(name),
+        "kept": bool(analysis.get("kept")),
+        "analyzed": "tracks" in analysis,
+        "video_count": len(videos),
+        "episodes": [
+            {"file_id": e.get("file_id"), "label": titles.episode_label(e.get("name") or ""), "status": e.get("status")}
+            for e in episodes
+        ],
+        "episode_summary": episode_summary(episodes),
         "size": raw.get("size") or sum((f.get("size") or 0) for f in files),
         "created_at": raw.get("created_at"),
         "state": raw.get("download_state") or ("completed" if raw.get("download_finished") else ""),
@@ -246,7 +284,8 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
         "files": len(files),
         "file_list": sorted(
             (
-                {"name": f.get("short_name") or f.get("name") or "", "size": f.get("size") or 0}
+                {"id": f.get("id"), "name": f.get("short_name") or f.get("name") or "", "size": f.get("size") or 0,
+                 "is_video": language.is_video_file(f)}
                 for f in files
             ),
             key=lambda f: f["size"],
@@ -329,6 +368,7 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
     def status(x_torbox_token: str | None = Header(default=None)):
         key, source = current_api_key(x_torbox_token)
         return {
+            "version": app_version(),
             "api_key_configured": bool(key),
             "api_key_source": source,
             # True si se puede analizar (con ffprobe o, si no, con ffmpeg)
@@ -399,17 +439,45 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         return url
 
     def probe_item(client, tl: dict, kind: str, raw: dict) -> dict:
-        main = language.pick_main_video(raw.get("files") or [])
-        if main is None:
-            result = {"status": language.UNKNOWN, "languages": [], "tracks": [], "error": "Sin archivo de vídeo"}
-        else:
-            info = language.probe_with(tl, link_for(client, kind, raw["id"], main["id"]))
+        """Lee las pistas. En una serie con varios episodios lee cada uno."""
+        files = raw.get("files") or []
+        videos = language.video_files(files)
+        if not videos:
+            result = {"status": language.UNKNOWN, "languages": [], "tracks": [], "episodes": [], "error": "Sin archivo de vídeo"}
+        elif len(videos) == 1:
+            info = language.probe_with(tl, link_for(client, kind, raw["id"], videos[0]["id"]))
             langs = [t["language"] for t in info["tracks"]]
             result = {
                 "status": language.classify_audio_languages(langs),
                 "languages": langs,
                 "tracks": info["tracks"],
                 "duration": info["duration"],
+                "episodes": [],
+                "error": None,
+            }
+        else:
+            def one(f: dict) -> dict:
+                name = f.get("short_name") or (f.get("name") or "").rsplit("/", 1)[-1]
+                try:
+                    info = language.probe_with(tl, link_for(client, kind, raw["id"], f["id"]))
+                    langs = [t["language"] for t in info["tracks"]]
+                    return {"file_id": f["id"], "name": name, "status": language.classify_audio_languages(langs),
+                            "languages": langs, "tracks": info["tracks"], "duration": info["duration"], "error": None}
+                except Exception as exc:  # noqa: BLE001 - se informa por episodio
+                    return {"file_id": f["id"], "name": name, "status": language.UNKNOWN,
+                            "languages": [], "tracks": [], "duration": None, "error": str(exc)[:200]}
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                episodes = list(pool.map(one, videos))
+            if all(e["error"] for e in episodes):
+                raise RuntimeError(f"No se pudo leer ningún episodio: {episodes[0]['error']}")
+            first = next(e for e in episodes if not e["error"])
+            result = {
+                "status": language.combine([e["status"] for e in episodes]),
+                "languages": sorted({lang for e in episodes for lang in e["languages"]}),
+                "tracks": first["tracks"],
+                "duration": first["duration"],
+                "episodes": episodes,
                 "error": None,
             }
         cache.set(_key(kind, raw.get("id")), result)
@@ -434,11 +502,11 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         return tl
 
     @app.get("/api/items/{kind}/{item_id}/tracks")
-    def item_tracks(kind: str, item_id: int, client=Depends(get_client)):
+    def item_tracks(kind: str, item_id: int, refresh: bool = False, client=Depends(get_client)):
         if kind not in KINDS:
             raise HTTPException(status_code=404, detail="Tipo desconocido")
         entry = cache.get(_key(kind, item_id)) or {}
-        if "tracks" not in entry:
+        if "tracks" not in entry or refresh:
             tl = require_tools()
             raw = find_raw(client, kind, item_id)
             try:
@@ -450,6 +518,10 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             entry = cache.get(_key(kind, item_id)) or {}
         return {
             "tracks": entry.get("tracks", []),
+            "episodes": [
+                {**e, "label": titles.episode_label(e.get("name") or "")} for e in entry.get("episodes") or []
+            ],
+            "episode_summary": episode_summary(entry.get("episodes") or []),
             "duration": entry.get("duration"),
             "status": entry.get("status"),
             "manual": entry.get("manual"),
@@ -463,6 +535,7 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         track: int = Query(0, ge=0, le=64),
         start: float = Query(0, ge=0, le=24 * 3600),
         duration: float = Query(30, ge=5, le=90),
+        file_id: int | None = Query(None),
         client=Depends(get_client),
     ):
         if kind not in KINDS:
@@ -470,14 +543,15 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
         ffmpeg = tools()["ffmpeg"]
         if not ffmpeg:
             raise HTTPException(status_code=400, detail="No se encuentra ffmpeg (necesario para escuchar el audio).")
-        ck = (kind, item_id, track, round(start), round(duration))
+        ck = (kind, item_id, file_id, track, round(start), round(duration))
         if ck not in clips:
             raw = find_raw(client, kind, item_id)
-            main = language.pick_main_video(raw.get("files") or [])
-            if main is None:
+            files = raw.get("files") or []
+            target = next((f for f in files if f.get("id") == file_id), None) if file_id is not None else language.pick_main_video(files)
+            if target is None:
                 raise HTTPException(status_code=400, detail="Este elemento no tiene archivo de vídeo")
             try:
-                url = link_for(client, kind, item_id, main["id"])
+                url = link_for(client, kind, item_id, target["id"])
                 clips[ck] = language.extract_audio_clip(url, track, start, duration, ffmpeg)
             except TorboxError as exc:
                 raise HTTPException(status_code=502, detail=str(exc))
@@ -495,6 +569,21 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Tipo desconocido")
         cache.update(_key(kind, item_id), manual=req.status)
         return {"ok": True, "manual": req.status}
+
+    @app.put("/api/items/{kind}/{item_id}/kept")
+    def set_kept(kind: str, item_id: int, req: KeptRequest):
+        """Marcar como «conservado» al revisar: no vuelve a salir en «Para limpiar»."""
+        if kind not in KINDS:
+            raise HTTPException(status_code=404, detail="Tipo desconocido")
+        cache.update(_key(kind, item_id), kept=True if req.kept else None)
+        return {"ok": True, "kept": req.kept}
+
+    @app.get("/api/account")
+    def account(client=Depends(get_client)):
+        try:
+            return client.account()
+        except TorboxError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
 
     @app.post("/api/analyze")
     def analyze(req: ItemsRequest, client=Depends(get_client)):

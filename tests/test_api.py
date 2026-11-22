@@ -228,7 +228,11 @@ def test_items_include_file_list_and_date(tmp_path, monkeypatch):
     app = create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path)
     item = TestClient(app).get("/api/items").json()["items"][0]
     assert item["created_at"] == "2026-03-01T10:00:00Z"
-    assert item["file_list"] == [{"name": "e2.mkv", "size": 20}, {"name": "e1.mkv", "size": 10}]
+    assert item["file_list"] == [
+        {"id": 2, "name": "e2.mkv", "size": 20, "is_video": True},
+        {"id": 1, "name": "e1.mkv", "size": 10, "is_video": True},
+    ]
+    assert item["title"] == "Show · T1" and item["video_count"] == 2
 
 
 def test_items_mark_duplicates(tmp_path, monkeypatch):
@@ -257,5 +261,83 @@ def test_index_is_not_cached_and_assets_are_versioned(setup):
     assert r.status_code == 200
     assert r.headers["cache-control"] == "no-store"
     assert "/static/app.js?v=" in r.text and "/static/style.css?v=" in r.text
-    assert "{{APP_VERSION}}" not in r.text and "versión" in r.text
-    assert 'id="stat-dup-btn"' in r.text
+    assert "{{APP_VERSION}}" not in r.text and 'window.APP_VERSION = "' in r.text
+    assert 'id="tabs"' in r.text
+
+
+def _series_app(tmp_path, monkeypatch, user=None):
+    monkeypatch.setenv("TORBOX_API_KEY", "x")
+    series = [{"id": 9, "name": "The.Bear.S03.1080p.WEB", "size": 30, "files": [
+        {"id": 1, "name": "B/The.Bear.S03E01.mkv", "short_name": "The.Bear.S03E01.mkv", "size": 10},
+        {"id": 2, "name": "B/The.Bear.S03E02.mkv", "short_name": "The.Bear.S03E02.mkv", "size": 10},
+        {"id": 3, "name": "B/Sample/sample.mkv", "short_name": "sample.mkv", "size": 1},
+    ]}]
+
+    def handler(r):
+        path = r.url.path.removeprefix("/v1/api")
+        if path == "/torrents/mylist":
+            return httpx.Response(200, json={"success": True, "data": series})
+        if path == "/torrents/requestdl":
+            return httpx.Response(200, json={"success": True, "data": f"http://cdn/{r.url.params['file_id']}.mkv"})
+        if path == "/user/me":
+            return httpx.Response(200, json={"success": True, "data": user or {"plan": 2, "email": "x"}})
+        return httpx.Response(200, json={"success": True, "data": []})
+
+    transport = httpx.MockTransport(handler)
+    app = create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path)
+    return TestClient(app)
+
+
+def test_series_is_analyzed_episode_by_episode(tmp_path, monkeypatch):
+    from app import language
+    client = _series_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(language, "find_tools", lambda custom=None: {"ffprobe": "/x/ffprobe", "ffmpeg": "/x/ffmpeg"})
+    probed = []
+
+    def fake_probe(tools, url):
+        probed.append(url)
+        lang = "spa" if url.endswith("/1.mkv") else "eng"
+        return {"duration": 1500.0, "tracks": [{"n": 0, "language": lang, "title": "", "codec": "ac3", "channels": 6}]}
+
+    monkeypatch.setattr(language, "probe_with", fake_probe)
+    r = client.get("/api/items/torrent/9/tracks").json()
+    assert sorted(probed) == ["http://cdn/1.mkv", "http://cdn/2.mkv"]          # sin el «sample»
+    assert [(e["label"], e["status"]) for e in r["episodes"]] == [("T3 E1", "es"), ("T3 E2", "no_es")]
+    assert r["status"] == "no_es"
+    assert r["episode_summary"] == "1 de 2 episodios sin español"
+    item = client.get("/api/items").json()["items"][0]
+    assert item["audio_status"] == "no_es" and item["episode_summary"] == "1 de 2 episodios sin español"
+    assert [e["label"] for e in item["episodes"]] == ["T3 E1", "T3 E2"]
+    probed.clear()
+    client.get("/api/items/torrent/9/tracks", params={"refresh": "true"})     # «refresh» vuelve a leer
+    assert len(probed) == 2
+
+
+def test_clip_of_a_specific_episode(tmp_path, monkeypatch):
+    from app import language
+    client = _series_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(language, "find_tools", lambda custom=None: {"ffprobe": None, "ffmpeg": "/x/ffmpeg"})
+    urls = []
+    monkeypatch.setattr(language, "extract_audio_clip", lambda url, t, s, d, ff: urls.append(url) or (b"x", "audio/mpeg"))
+    assert client.get("/api/items/torrent/9/clip", params={"file_id": 2}).status_code == 200
+    assert urls == ["http://cdn/2.mkv"]
+
+
+def test_kept_survives_new_analysis(tmp_path, monkeypatch):
+    from app import language
+    client = _series_app(tmp_path, monkeypatch)
+    assert client.put("/api/items/torrent/9/kept", json={"kept": True}).status_code == 200
+    assert client.get("/api/items").json()["items"][0]["kept"] is True
+    monkeypatch.setattr(language, "find_tools", lambda custom=None: {"ffprobe": "/x", "ffmpeg": "/y"})
+    monkeypatch.setattr(language, "probe_with", lambda t, u: {"duration": 1.0, "tracks": []})
+    client.get("/api/items/torrent/9/tracks", params={"refresh": "true"})
+    assert client.get("/api/items").json()["items"][0]["kept"] is True
+    client.put("/api/items/torrent/9/kept", json={"kept": False})
+    assert client.get("/api/items").json()["items"][0]["kept"] is False
+
+
+def test_account_plan_and_detected_limit(tmp_path, monkeypatch):
+    client = _series_app(tmp_path, monkeypatch)
+    assert client.get("/api/account").json() == {"plan": 2, "plan_name": "Pro", "storage_limit": None}
+    client = _series_app(tmp_path / "b", monkeypatch, user={"plan": 3, "storage_limit": 1000})
+    assert client.get("/api/account").json()["storage_limit"] == 1000 * 1024 ** 3

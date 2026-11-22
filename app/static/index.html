@@ -2,142 +2,36 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <title>Controltorbox</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <div>
-      <h1>Controltorbox</h1>
-      <p class="sub">Gestiona tu almacenamiento de TorBox y elimina lo que no tiene audio en español.</p>
-    </div>
-    <button id="btn-settings" class="secondary" title="Ajustes">⚙ Ajustes</button>
-  </header>
-
-  <div id="banner" class="banner hidden"></div>
-
-  <section class="summary">
-    <div class="stat"><span id="stat-total">–</span><label>Elementos</label></div>
-    <div class="stat"><span id="stat-size">–</span><label>Ocupado</label></div>
-    <div class="stat warn"><span id="stat-noes">–</span><label>Sin español</label></div>
-    <div class="stat muted"><span id="stat-unknown">–</span><label>Desconocido</label></div>
-    <button type="button" id="stat-dup-btn" class="stat dup" title="Ver duplicados"><span id="stat-dup">–</span><label>Duplicados</label></button>
-  </section>
-
-  <section class="toolbar">
-    <input id="search" type="search" placeholder="Buscar por nombre…">
-    <select id="filter-audio">
-      <option value="all">Todo el audio</option>
-      <option value="not_es" selected>Sin español (incluye desconocido)</option>
-      <option value="no_es">Sin español (confirmado)</option>
-      <option value="unknown">Desconocido</option>
-      <option value="es">Con español</option>
-    </select>
-    <select id="filter-kind">
-      <option value="all">Todos los tipos</option>
-      <option value="torrent">Torrents</option>
-      <option value="usenet">Usenet</option>
-      <option value="webdl">Web</option>
-    </select>
-    <select id="sort" title="Ordenar">
-      <option value="size_desc">Más grandes primero</option>
-      <option value="size_asc">Más pequeños primero</option>
-      <option value="date_desc">Más recientes primero</option>
-      <option value="date_asc">Más antiguos primero</option>
-      <option value="name_asc">Nombre (A-Z)</option>
-    </select>
-    <label class="check"><input id="only-video" type="checkbox" checked> Solo vídeo</label>
-    <label class="check"><input id="only-dups" type="checkbox"> Solo duplicados</label>
-    <button id="btn-reload" class="secondary">Recargar</button>
-  </section>
-
-  <section class="actions">
-    <span id="selection-info">0 seleccionados</span>
-    <button id="btn-select-extra" class="secondary hidden" title="En cada grupo conserva la mejor copia (con español y, a igualdad, la más grande) y selecciona el resto">Seleccionar copias sobrantes</button>
-    <button id="btn-analyze" class="secondary" disabled title="Lee las pistas de audio reales del archivo">Analizar audio</button>
-    <button id="btn-delete" class="danger" disabled>Eliminar seleccionados</button>
-  </section>
-
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th><input id="select-all" type="checkbox" title="Seleccionar visibles"></th>
-          <th>Nombre</th>
-          <th>Tipo</th>
-          <th class="num">Tamaño</th>
-          <th>Audio</th>
-        </tr>
-      </thead>
-      <tbody id="rows"><tr><td colspan="5" class="empty">Cargando…</td></tr></tbody>
-    </table>
+  <div class="shell">
+    <main id="view" aria-live="polite"></main>
   </div>
 
-  <dialog id="confirm">
-    <form method="dialog">
-      <h2>¿Eliminar de TorBox?</h2>
-      <p id="confirm-text"></p>
-      <ul id="confirm-list"></ul>
-      <p class="warn-text">Esta acción no se puede deshacer.</p>
-      <menu>
-        <button value="cancel" class="secondary">Cancelar</button>
-        <button value="ok" class="danger">Eliminar</button>
-      </menu>
-    </form>
-  </dialog>
+  <nav id="tabs" class="tabs hidden" aria-label="Secciones">
+    <a href="#/inicio" data-tab="inicio">
+      <span class="pill"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg></span>
+      <span>Inicio</span>
+    </a>
+    <a href="#/biblioteca" data-tab="biblioteca">
+      <span class="pill"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M8 4v5"/><path d="M16 4v5"/></svg></span>
+      <span>Biblioteca</span>
+    </a>
+    <a href="#/ajustes" data-tab="ajustes">
+      <span class="pill"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span>
+      <span>Ajustes</span>
+    </a>
+  </nav>
 
-  <dialog id="player">
-    <h2>Escuchar audio</h2>
-    <p class="hint" id="player-title"></p>
-    <div class="player-controls">
-      <label for="player-pos">Desde</label>
-      <input id="player-pos" type="range" min="0" max="95" step="1" value="15">
-      <span id="player-pos-label" class="mono"></span>
-      <select id="player-len" title="Duración del fragmento">
-        <option value="15">15 s</option>
-        <option value="30" selected>30 s</option>
-        <option value="60">60 s</option>
-      </select>
-    </div>
-    <ul id="player-tracks" class="tracks"></ul>
-    <audio id="player-audio" controls></audio>
-    <p id="player-error" class="warn-text hidden"></p>
-    <div id="player-manual" class="manual">
-      <span>Tras escucharlo, ¿tiene audio en español?</span>
-      <div>
-        <button type="button" class="secondary small" data-status="es">Sí, tiene español</button>
-        <button type="button" class="secondary small" data-status="no_es">No tiene español</button>
-        <button type="button" class="secondary small" data-status="">Automático</button>
-      </div>
-    </div>
-    <menu>
-      <button type="button" id="player-close" class="secondary">Cerrar</button>
-    </menu>
-  </dialog>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+  <audio id="audio" class="hidden"></audio>
 
-  <dialog id="settings">
-    <form id="settings-form" method="dialog">
-      <h2>Ajustes</h2>
-      <label for="api-key">API token de TorBox</label>
-      <p class="hint" id="api-key-current"></p>
-      <div class="key-row">
-        <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Pega aquí tu API token">
-        <button type="button" id="btn-toggle-key" class="secondary" title="Mostrar/ocultar">👁</button>
-      </div>
-      <p class="hint">Lo encontrarás en torbox.app → Settings → API Key. Se guarda en este navegador, así que no tendrás que volver a ponerlo al actualizar la app.</p>
-      <p id="settings-error" class="warn-text hidden"></p>
-      <menu>
-        <button type="button" id="btn-clear-key" class="secondary">Borrar token</button>
-        <span class="spacer"></span>
-        <button type="button" id="btn-close-settings" class="secondary">Cerrar</button>
-        <button type="submit" id="btn-save-key" value="save">Guardar</button>
-      </menu>
-    </form>
-  </dialog>
-
-  <footer>Controltorbox · versión {{APP_VERSION}}</footer>
-
+  <script>window.APP_VERSION = "{{APP_VERSION}}";</script>
   <script src="/static/app.js"></script>
 </body>
 </html>

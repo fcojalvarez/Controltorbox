@@ -40,6 +40,17 @@ Notas:
 Compilar a mano: `cd android && ./gradlew assembleRelease` (requiere el SDK de Android).
 Tests: `./gradlew testDebugUnitTest` (incluye capturas de pantalla con Paparazzi).
 
+## Versión web
+
+La web tiene el mismo diseño y funciones que la app Android: **Inicio** (espacio con tu
+límite y el de la cuenta dentro de la barra, y tareas «Para limpiar»), revisión guiada
+**Sin audio en español** (Escuchar / Conservar / Borrar), **Duplicados** eligiendo la copia
+a conservar, **Biblioteca** con nombres limpios, filtros, orden y selección múltiple
+(botón *Seleccionar*), y **ficha** con las pistas de audio, comprobación **episodio a
+episodio** en las series y corrección manual. Se adapta al móvil y al escritorio, en modo
+claro y oscuro. El token y tus límites se guardan en el navegador; las notificaciones
+diarias son solo de la app Android.
+
 ## Funciones
 
 - Lista todo lo que tienes en TorBox (torrents, Usenet y web) ordenado por tamaño.
