@@ -1,8 +1,40 @@
 # Controltorbox
 
-Aplicación web local para gestionar el almacenamiento de [TorBox](https://torbox.app):
+Aplicación web local (y [app Android](#app-android)) para gestionar el almacenamiento de [TorBox](https://torbox.app):
 lista tus torrents, descargas Usenet y descargas web, detecta cuáles **no tienen
 audio en español** y te deja eliminarlos en bloque para liberar espacio.
+
+## App Android
+
+En `android/` hay una app nativa que funciona **sola en el móvil**: habla directamente con
+TorBox, sin necesidad de tu PC ni de ningún servidor.
+
+**Instalarla:** abre desde el móvil
+[Releases → App Android (última versión)](https://github.com/fcojalvarez/Controltorbox/releases/tag/android-latest),
+descarga `Controltorbox.apk` e instálalo (Android pedirá permitir instalar apps de esa
+fuente). Cada vez que se sube un cambio a `android/`, GitHub compila una versión nueva
+en esa misma página; se instala encima de la anterior sin perder el token ni los ajustes.
+
+Incluye lo mismo que la web (lista, filtros, orden, duplicados, análisis y escucha de pistas,
+marcar a mano y eliminar) y además **notificaciones**, comprobando TorBox cada 15 min – 6 h:
+
+- **Nuevo sin español**: se ha añadido algo cuyo nombre no indica audio en español.
+- **Nuevo duplicado**: se ha añadido algo que ya tenías.
+- **Espacio ocupado**: el total supera el límite que elijas (avisa al cruzarlo, no en cada comprobación).
+
+Notas:
+- El análisis y la escucha usan el reproductor de Android: no descargan la película entera.
+  AC3 y E-AC3 se reproducen en la mayoría de móviles; DTS solo en algunos (la app lo indica).
+- Android puede retrasar las comprobaciones para ahorrar batería; si no llegan avisos, quita
+  la optimización de batería para Controltorbox.
+- **Firma del APK:** para que cada versión se instale encima de la anterior, todas se firman
+  con la misma clave, que **no** está en el repositorio. GitHub la toma de dos secretos del
+  repositorio (*Settings → Secrets and variables → Actions*): `ANDROID_KEYSTORE_BASE64`
+  (el archivo `.keystore` en base64) y `ANDROID_KEYSTORE_PASSWORD`. Sin ellos, la compilación
+  automática no publica el APK.
+
+Compilar a mano: `cd android && ./gradlew assembleRelease` (requiere el SDK de Android).
+Tests: `./gradlew testDebugUnitTest` (incluye capturas de pantalla con Paparazzi).
 
 ## Funciones
 

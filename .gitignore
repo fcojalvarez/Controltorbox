@@ -4,3 +4,10 @@ __pycache__/
 data/
 .venv/
 .pytest_cache/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+*.apk
+android/app/*.keystore
