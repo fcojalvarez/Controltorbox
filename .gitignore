@@ -11,3 +11,4 @@ android/local.properties
 android/.kotlin/
 *.apk
 android/app/*.keystore
+.firma-android/
