@@ -60,6 +60,7 @@ def test_delete(setup):
     assert all(x["ok"] for x in r.json()["results"])
     assert calls[0][0] == "/torrents/controltorrent"
     assert b'"torrent_id":2' in calls[0][1] and b'"operation":"delete"' in calls[0][1]
+    assert b'"all":false' in calls[0][1]
     assert calls[1][0] == "/usenet/controlusenetdownload"
 
 

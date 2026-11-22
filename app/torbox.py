@@ -97,7 +97,8 @@ class TorboxClient:
         k = KINDS[kind]
         resp = self._client.post(
             k.control_path,
-            json={k.control_id_field: int(item_id), "operation": "delete"},
+            # TorBox exige también "all" (False = solo este elemento).
+            json={k.control_id_field: int(item_id), "operation": "delete", "all": False},
         )
         self._unwrap(resp)
 

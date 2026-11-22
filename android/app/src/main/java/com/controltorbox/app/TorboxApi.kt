@@ -73,7 +73,8 @@ class TorboxApi(
     }
 
     suspend fun delete(kind: Kind, id: Long): Unit = withContext(Dispatchers.IO) {
-        val body = JSONObject().put(kind.controlIdField, id).put("operation", "delete").toString()
+        // TorBox exige también "all" (false = solo este elemento).
+        val body = JSONObject().put(kind.controlIdField, id).put("operation", "delete").put("all", false).toString()
         execute(Request.Builder().url(url(kind.controlPath)).post(body.toRequestBody(JSON)).build())
         Unit
     }

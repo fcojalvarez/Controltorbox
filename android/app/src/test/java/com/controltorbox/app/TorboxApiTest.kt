@@ -75,6 +75,8 @@ class TorboxApiTest {
         val body = JSONObject(req.body.readUtf8())
         assertEquals(1, body.getInt("torrent_id"))
         assertEquals("delete", body.getString("operation"))
+        assertEquals(false, body.getBoolean("all"))
+        assertEquals("application/json; charset=utf-8", req.getHeader("Content-Type"))
     }
 
     @Test fun downloadLink() = runTest {
