@@ -12,23 +12,25 @@ import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
-enum class AudioFilter(val label: String) {
-    NOT_ES("Sin español"), NO_ES("Sin español (confirmado)"), UNKNOWN("Desconocido"), ES("Con español"), ALL("Todo"), DUPS("Duplicados")
+enum class LibraryFilter(val label: String) {
+    ALL("Todo"), NO_ES("Sin español"), UNKNOWN("Sin comprobar"), DUPS("Duplicados"), ES("Con español")
 }
 
 enum class SortOrder(val key: String, val label: String) {
-    SIZE_DESC("size_desc", "Más grandes primero"),
-    SIZE_ASC("size_asc", "Más pequeños primero"),
-    DATE_DESC("date_desc", "Más recientes primero"),
-    DATE_ASC("date_asc", "Más antiguos primero"),
+    DATE_DESC("date_desc", "Más recientes"),
+    DATE_ASC("date_asc", "Más antiguos"),
+    SIZE_DESC("size_desc", "Más grandes"),
+    SIZE_ASC("size_asc", "Más pequeños"),
     NAME_ASC("name_asc", "Nombre (A-Z)");
 
     companion object {
-        fun fromKey(k: String) = entries.firstOrNull { it.key == k } ?: SIZE_DESC
+        fun fromKey(k: String) = entries.firstOrNull { it.key == k } ?: DATE_DESC
     }
 }
 
-/** Un elemento con todo lo que la pantalla necesita mostrar. */
+enum class Decision { KEEP, DELETE }
+
+/** Un elemento con todo lo que la interfaz necesita mostrar. */
 data class ItemRow(
     val item: TorboxItem,
     val status: AudioStatus,
@@ -36,7 +38,14 @@ data class ItemRow(
     val analysis: Analysis?,
     val duplicate: Duplicates.Group?,
     val createdAt: Instant?,
-)
+    val kept: Boolean = false,
+) {
+    val key: String get() = item.key
+    val title: String = Titles.clean(item.name)
+    val quality: String = Titles.quality(item.name)
+    val size: Long get() = item.totalSize
+    val hasVideo: Boolean get() = item.mainVideo != null
+}
 
 data class UiState(
     val hasToken: Boolean = false,
@@ -45,48 +54,82 @@ data class UiState(
     val error: String? = null,
     val message: String? = null,
     val selected: Set<String> = emptySet(),
-    val filter: AudioFilter = AudioFilter.NOT_ES,
+    val filter: LibraryFilter = LibraryFilter.ALL,
     val search: String = "",
-    val sort: SortOrder = SortOrder.SIZE_DESC,
-    val onlyVideo: Boolean = true,
+    val sort: SortOrder = SortOrder.DATE_DESC,
     val analyzing: String? = null,
     val update: UpdateInfo? = null,
     val updateProgress: Float? = null,
+    val updateDismissed: Boolean = false,
+    /** Decisiones de la pantalla «Revisar sin español» (se aplican al confirmar). */
+    val decisions: Map<String, Decision> = emptyMap(),
+    /** Copia elegida para conservar en cada grupo de duplicados (por id de grupo). */
+    val dupKeep: Map<String, String> = emptyMap(),
+    val storageLimitGb: Int = 500,
 ) {
-    val visible: List<ItemRow> by lazy { computeVisible() }
-    val totalSize: Long get() = rows.sumOf { it.item.totalSize }
-    val selectedRows: List<ItemRow> get() = rows.filter { it.item.key in selected }
-    val duplicateGroups: Int get() = rows.mapNotNull { it.duplicate?.id }.toSet().size
+    val totalSize: Long get() = rows.sumOf { it.size }
+    fun sizeOf(kind: Kind) = rows.filter { it.item.kind == kind }.sumOf { it.size }
+    fun row(key: String) = rows.firstOrNull { it.key == key }
 
-    private fun computeVisible(): List<ItemRow> {
+    /** Pendientes de revisar: vídeos sin español confirmado que no has decidido conservar. */
+    val reviewRows: List<ItemRow> by lazy {
+        rows.filter { it.hasVideo && it.status != AudioStatus.ES && !it.kept }
+            .sortedWith(compareBy<ItemRow> { if (it.status == AudioStatus.NO_ES) 0 else 1 }.thenByDescending { it.size })
+    }
+    val noEsCount: Int get() = reviewRows.count { it.status == AudioStatus.NO_ES }
+    val unknownRows: List<ItemRow> get() = reviewRows.filter { it.status == AudioStatus.UNKNOWN }
+
+    /** Grupos de duplicados con la copia a conservar (la elegida o la sugerida). */
+    val duplicateGroups: List<DupGroup> by lazy {
+        rows.filter { it.duplicate != null }.groupBy { it.duplicate!!.id }.map { (id, members) ->
+            val ranked = members.sortedWith(
+                compareByDescending<ItemRow> { RANK[it.status] ?: 1 }.thenByDescending { it.size },
+            )
+            val keep = dupKeep[id]?.takeIf { k -> members.any { it.key == k } } ?: ranked.first().key
+            DupGroup(id, members.first().duplicate!!.label, ranked, keep)
+        }.sortedByDescending { g -> g.members.sumOf { it.size } }
+    }
+    val duplicateFreeable: Long get() = duplicateGroups.sumOf { it.freeable }
+
+    val recent: List<ItemRow> get() = sortRows(rows, SortOrder.DATE_DESC).filter { it.createdAt != null }.take(3)
+
+    val libraryRows: List<ItemRow> by lazy {
         val q = search.trim().lowercase()
-        val base = rows.filter { r ->
-            (q.isEmpty() || r.item.name.lowercase().contains(q) || (r.duplicate?.label?.lowercase()?.contains(q) == true)) &&
-                (filter == AudioFilter.DUPS || !onlyVideo || r.item.mainVideo != null) &&
-                when (filter) {
-                    AudioFilter.NOT_ES -> r.status != AudioStatus.ES
-                    AudioFilter.NO_ES -> r.status == AudioStatus.NO_ES
-                    AudioFilter.UNKNOWN -> r.status == AudioStatus.UNKNOWN
-                    AudioFilter.ES -> r.status == AudioStatus.ES
-                    AudioFilter.ALL -> true
-                    AudioFilter.DUPS -> r.duplicate != null
-                }
-        }
-        val sorted = sortRows(base, sort)
-        if (filter != AudioFilter.DUPS) return sorted
-        // Agrupados: grupos ordenados por su copia más grande.
-        val order = sortRows(base, SortOrder.SIZE_DESC).map { it.duplicate!!.id }.distinct().withIndex()
-            .associate { it.value to it.index }
-        return sorted.sortedBy { order[it.duplicate!!.id] }
+        sortRows(
+            rows.filter { r ->
+                (q.isEmpty() || r.title.lowercase().contains(q) || r.item.name.lowercase().contains(q)) &&
+                    when (filter) {
+                        LibraryFilter.ALL -> true
+                        LibraryFilter.NO_ES -> r.status == AudioStatus.NO_ES
+                        LibraryFilter.UNKNOWN -> r.status == AudioStatus.UNKNOWN && r.hasVideo
+                        LibraryFilter.DUPS -> r.duplicate != null
+                        LibraryFilter.ES -> r.status == AudioStatus.ES
+                    }
+            },
+            sort,
+        )
     }
 
+    fun countFor(f: LibraryFilter) = when (f) {
+        LibraryFilter.ALL -> rows.size
+        LibraryFilter.NO_ES -> rows.count { it.status == AudioStatus.NO_ES }
+        LibraryFilter.UNKNOWN -> rows.count { it.status == AudioStatus.UNKNOWN && it.hasVideo }
+        LibraryFilter.DUPS -> rows.count { it.duplicate != null }
+        LibraryFilter.ES -> rows.count { it.status == AudioStatus.ES }
+    }
+
+    val selectedRows: List<ItemRow> get() = rows.filter { it.key in selected }
+    val showUpdateDock: Boolean get() = update != null && !updateDismissed
+
     companion object {
+        val RANK = mapOf(AudioStatus.ES to 2, AudioStatus.UNKNOWN to 1, AudioStatus.NO_ES to 0)
+
         fun sortRows(rows: List<ItemRow>, sort: SortOrder): List<ItemRow> = when (sort) {
-            SortOrder.SIZE_DESC -> rows.sortedByDescending { it.item.totalSize }
-            SortOrder.SIZE_ASC -> rows.sortedBy { it.item.totalSize }
+            SortOrder.SIZE_DESC -> rows.sortedByDescending { it.size }
+            SortOrder.SIZE_ASC -> rows.sortedBy { it.size }
             SortOrder.DATE_DESC -> rows.sortedWith(compareBy<ItemRow> { it.createdAt == null }.thenByDescending { it.createdAt })
             SortOrder.DATE_ASC -> rows.sortedWith(compareBy<ItemRow> { it.createdAt == null }.thenBy { it.createdAt })
-            SortOrder.NAME_ASC -> rows.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.item.name })
+            SortOrder.NAME_ASC -> rows.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
         }
 
         fun parseDate(s: String?): Instant? {
@@ -98,11 +141,21 @@ data class UiState(
     }
 }
 
+data class DupGroup(val id: String, val label: String, val members: List<ItemRow>, val keepKey: String) {
+    val toDelete: List<ItemRow> get() = members.filter { it.key != keepKey }
+    val freeable: Long get() = toDelete.sumOf { it.size }
+}
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     val store = Store(app)
     private var items: List<TorboxItem> = emptyList()
     private val _state = MutableStateFlow(
-        UiState(hasToken = store.token.isNotBlank(), sort = SortOrder.fromKey(store.sort), update = store.availableUpdate),
+        UiState(
+            hasToken = store.token.isNotBlank(),
+            sort = SortOrder.fromKey(store.sort),
+            update = store.availableUpdate,
+            storageLimitGb = store.alertSettings.storageLimitGb,
+        ),
     )
     val state: StateFlow<UiState> = _state
 
@@ -111,20 +164,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun rebuildRows() {
         val analyses = store.analyses()
         val manual = store.manualMarks()
+        val kept = store.kept
         val dups = Duplicates.find(items)
         val rows = items.map { item ->
             val (status, source) = store.statusOf(item, analyses, manual)
-            ItemRow(item, status, source, analyses[item.key], dups[item.key], UiState.parseDate(item.createdAt))
+            ItemRow(item, status, source, analyses[item.key], dups[item.key], UiState.parseDate(item.createdAt), item.key in kept)
         }
-        val keys = rows.map { it.item.key }.toSet()
-        _state.update { it.copy(rows = rows, selected = it.selected intersect keys, hasToken = store.token.isNotBlank()) }
+        val keys = rows.map { it.key }.toSet()
+        _state.update {
+            it.copy(
+                rows = rows,
+                selected = it.selected intersect keys,
+                decisions = it.decisions.filterKeys { k -> k in keys },
+                hasToken = store.token.isNotBlank(),
+                storageLimitGb = store.alertSettings.storageLimitGb,
+            )
+        }
     }
 
-    /** Carga elementos sin pasar por la red (para pruebas). */
+    /** Carga elementos sin pasar por la red (para pruebas y capturas). */
     internal fun loadItems(list: List<TorboxItem>) {
         items = list
         rebuildRows()
     }
+
+    internal fun setStateForPreview(transform: (UiState) -> UiState) = _state.update(transform)
 
     fun refresh() {
         if (store.token.isBlank()) {
@@ -145,55 +209,61 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: TorboxException) {
                 _state.update { it.copy(error = e.message) }
             } finally {
-                _state.update { it.copy(loading = false) }
+                _state.update { it.copy(loading = false, update = store.availableUpdate) }
             }
         }
     }
 
-    fun setFilter(f: AudioFilter) = _state.update { it.copy(filter = f) }
+    // -- Biblioteca -----------------------------------------------------------
+    fun setFilter(f: LibraryFilter) = _state.update { it.copy(filter = f) }
     fun setSearch(s: String) = _state.update { it.copy(search = s) }
-    fun setOnlyVideo(v: Boolean) = _state.update { it.copy(onlyVideo = v) }
     fun setSort(s: SortOrder) {
         store.sort = s.key
         _state.update { it.copy(sort = s) }
     }
 
-    fun toggle(key: String) = _state.update {
+    fun toggleSelected(key: String) = _state.update {
         it.copy(selected = if (key in it.selected) it.selected - key else it.selected + key)
     }
 
-    fun selectAllVisible(select: Boolean) = _state.update { s ->
-        val keys = s.visible.map { it.item.key }.toSet()
-        s.copy(selected = if (select) s.selected + keys else s.selected - keys)
-    }
-
+    fun clearSelection() = _state.update { it.copy(selected = emptySet()) }
     fun clearMessage() = _state.update { it.copy(message = null, error = null) }
 
-    /** En cada grupo de duplicados conserva la copia con español (o la más grande) y selecciona el resto. */
-    fun selectExtraCopies() {
+    // -- Revisar sin español ----------------------------------------------------
+    fun decide(key: String, d: Decision) = _state.update {
+        val cur = it.decisions[key]
+        it.copy(decisions = if (cur == d) it.decisions - key else it.decisions + (key to d))
+    }
+
+    /** Aplica las decisiones: borra las marcadas y recuerda las conservadas. */
+    fun applyReview() {
         val s = _state.value
-        val rank = mapOf(AudioStatus.ES to 2, AudioStatus.UNKNOWN to 1, AudioStatus.NO_ES to 0)
-        var selected = s.selected
-        var count = 0
-        var size = 0L
-        s.rows.filter { it.duplicate != null }.groupBy { it.duplicate!!.id }.values.forEach { members ->
-            val ranked = members.sortedWith(
-                compareByDescending<ItemRow> { rank[it.status] ?: 1 }.thenByDescending { it.item.totalSize },
-            )
-            selected = selected - ranked.first().item.key
-            ranked.drop(1).forEach { selected = selected + it.item.key; count++; size += it.item.totalSize }
-        }
-        _state.update {
-            it.copy(
-                selected = selected,
-                message = if (count == 0) "No hay copias sobrantes."
-                else "Seleccionadas $count copias sobrantes (${Format.size(size)}). Revísalo antes de eliminar.",
-            )
+        val toKeep = s.decisions.filterValues { it == Decision.KEEP }.keys
+        val toDelete = s.decisions.filterValues { it == Decision.DELETE }.keys
+        if (toKeep.isNotEmpty()) store.kept = store.kept + toKeep
+        _state.update { it.copy(decisions = emptyMap()) }
+        if (toDelete.isEmpty()) {
+            rebuildRows()
+            _state.update { it.copy(message = "Guardado: ${toKeep.size} conservado(s).") }
+        } else {
+            delete(toDelete)
         }
     }
 
-    fun deleteSelected() {
-        val targets = _state.value.selectedRows.map { it.item }
+    // -- Duplicados -------------------------------------------------------------
+    fun keepCopy(groupId: String, key: String) = _state.update { it.copy(dupKeep = it.dupKeep + (groupId to key)) }
+
+    fun deleteDuplicateCopies() {
+        val keys = _state.value.duplicateGroups.flatMap { g -> g.toDelete.map { it.key } }
+        _state.update { it.copy(dupKeep = emptyMap()) }
+        delete(keys)
+    }
+
+    // -- Borrado ----------------------------------------------------------------
+    fun deleteSelected() = delete(_state.value.selected)
+
+    fun delete(keys: Collection<String>) {
+        val targets = items.filter { it.key in keys }
         if (targets.isEmpty()) return
         viewModelScope.launch {
             _state.update { it.copy(loading = true) }
@@ -204,23 +274,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     api().delete(t.kind, t.id)
                     done += t.key
                 } catch (e: TorboxException) {
-                    failed += "${t.name}: ${e.message}"
+                    failed += "${Titles.clean(t.name)}: ${e.message}"
                 }
             }
             store.forget(done)
             items = items.filter { it.key !in done }
             rebuildRows()
+            val freed = targets.filter { it.key in done }.sumOf { it.totalSize }
             _state.update {
                 it.copy(
                     loading = false,
                     selected = it.selected - done.toSet(),
-                    message = if (failed.isEmpty()) "Eliminados ${done.size} elemento(s)." else null,
-                    error = failed.takeIf { f -> f.isNotEmpty() }?.let { f -> "No se pudieron eliminar ${f.size}:\n${f.first()}" },
+                    message = if (done.isNotEmpty()) "Borrados ${done.size} · liberados ${Format.size(freed)}" else null,
+                    error = failed.takeIf { f -> f.isNotEmpty() }?.let { f -> "No se pudieron borrar ${f.size}:\n${f.first()}" },
                 )
             }
         }
     }
 
+    // -- Audio --------------------------------------------------------------------
     suspend fun linkFor(item: TorboxItem): String {
         val file = item.mainVideo ?: throw TorboxException("Este elemento no tiene archivo de vídeo.")
         return api().downloadLink(item.kind, item.id, file.id)
@@ -236,25 +308,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return analysis
     }
 
-    fun analyzeSelected() {
-        val targets = _state.value.selectedRows.map { it.item }.filter { it.mainVideo != null }
-        if (targets.isEmpty()) return
+    /** Analiza todos los que tienen el idioma sin comprobar. */
+    fun analyzeUnknown() {
+        val targets = _state.value.unknownRows.map { it.item }
+        if (targets.isEmpty() || _state.value.analyzing != null) return
         viewModelScope.launch {
-            val errors = mutableListOf<String>()
+            var errors = 0
+            var withEs = 0
             targets.forEachIndexed { i, item ->
                 _state.update { it.copy(analyzing = "Analizando ${i + 1} de ${targets.size}…") }
                 try {
-                    val a = analyze(item)
-                    if (a.status == AudioStatus.ES) _state.update { it.copy(selected = it.selected - item.key) }
+                    if (analyze(item).status == AudioStatus.ES) withEs++
                 } catch (e: Exception) {
-                    errors += "${item.name}: ${e.message}"
+                    errors++
                 }
             }
             _state.update {
                 it.copy(
                     analyzing = null,
-                    message = "Análisis terminado.",
-                    error = errors.takeIf { e -> e.isNotEmpty() }?.let { e -> "${e.size} no se pudieron analizar:\n${e.first()}" },
+                    message = "Analizados ${targets.size - errors}: $withEs con español" +
+                        if (errors > 0) " · $errors no se pudieron leer" else "",
                 )
             }
         }
@@ -265,6 +338,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         rebuildRows()
     }
 
+    // -- Ajustes ------------------------------------------------------------------
     /** Comprueba el token contra TorBox y lo guarda. */
     suspend fun saveToken(token: String) {
         TorboxApi(token.trim()).list(Kind.TORRENT)
@@ -283,9 +357,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveAlertSettings(s: AlertSettings) {
         store.alertSettings = s
+        _state.update { it.copy(storageLimitGb = s.storageLimitGb) }
     }
 
-    fun reloadUpdate() = _state.update { it.copy(update = store.availableUpdate) }
+    // -- Actualizaciones ----------------------------------------------------------
+    fun reloadUpdate() = _state.update { it.copy(update = store.availableUpdate, updateDismissed = false) }
+    fun dismissUpdate() = _state.update { it.copy(updateDismissed = true) }
 
     /** Comprobación manual de actualizaciones (botón en Ajustes). Devuelve un texto para mostrar. */
     suspend fun checkForUpdate(): String = try {
@@ -303,7 +380,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         if (!Updater.canInstall(app)) {
             Updater.openInstallPermission(app)
-            _state.update { it.copy(message = "Permite «Instalar apps desconocidas» para Controltorbox y vuelve a pulsar Actualizar.") }
+            _state.update { it.copy(message = "Permite «Instalar apps desconocidas» para Controltorbox y vuelve a pulsar Instalar.") }
             return
         }
         viewModelScope.launch {

@@ -7,8 +7,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
+import com.android.resources.NightMode
 import org.junit.Rule
 import org.junit.Test
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /** Capturas de las pantallas con datos de ejemplo (./gradlew recordPaparazziDebug). */
 class ScreenshotTest {
@@ -22,75 +25,106 @@ class ScreenshotTest {
     }
 
     private val GB = 1024L * 1024 * 1024
+    private val now = Instant.now()
+    private fun ago(days: Long) = now.minus(days, ChronoUnit.DAYS).toString()
     private fun item(kind: Kind, id: Long, name: String, gb: Double, date: String?, files: List<String> = listOf("$name.mkv")) =
         TorboxItem(kind, id, name, (gb * GB).toLong(), date, "", true,
             files.mapIndexed { i, f -> TorboxFile(id * 10 + i, f, f, (gb * GB / files.size).toLong()) })
 
     private val sample = listOf(
-        item(Kind.TORRENT, 1, "Dune.Part.Two.2024.2160p.WEB-DL.Castellano.AC3", 18.0, "2026-10-02T10:00:00Z"),
-        item(Kind.TORRENT, 2, "The.Bear.S03.1080p.WEB.h264-ETHEL", 9.0, "2026-11-05T21:30:00Z",
+        item(Kind.TORRENT, 1, "Dune.Part.Two.2024.2160p.WEB-DL.Castellano.AC3", 18.0, ago(51)),
+        item(Kind.TORRENT, 2, "The.Bear.S03.1080p.WEB.h264-ETHEL", 9.0, ago(2),
             listOf("The.Bear.S03E01.mkv", "The.Bear.S03E02.mkv", "The.Bear.S03E03.mkv")),
-        item(Kind.TORRENT, 3, "Shogun.2024.S01E01.VOSE.1080p", 3.2, "2025-01-15T08:00:00Z"),
-        item(Kind.TORRENT, 4, "Oppenheimer.2023.1080p.BluRay.x264", 14.0, "2026-06-20T08:00:00Z"),
-        item(Kind.USENET, 9, "Oppenheimer (2023) [4K HDR][Dual]", 32.0, "2026-11-02T10:00:00Z"),
-        item(Kind.USENET, 10, "The.Bear.S03E02.720p.HDTV", 1.2, "2026-11-03T10:00:00Z"),
+        item(Kind.TORRENT, 3, "Shogun.2024.S01E01.VOSE.1080p", 3.2, ago(311)),
+        item(Kind.TORRENT, 4, "Oppenheimer.2023.1080p.BluRay.x264", 14.0, ago(155)),
+        item(Kind.USENET, 9, "Oppenheimer (2023) [4K HDR][Dual]", 32.0, ago(20)),
+        item(Kind.USENET, 10, "The.Bear.S03E02.720p.HDTV", 1.2, ago(4)),
     )
 
-    private fun vm(update: UpdateInfo? = null): MainViewModel {
+    private fun vm(update: UpdateInfo? = null, token: String = "token-de-prueba-9f2a"): MainViewModel {
         val app = TestApp(paparazzi.context)
-        Store(app).token = "token-de-prueba-9f2a"
-        Store(app).availableUpdate = update
+        val store = Store(app)
+        store.token = token
+        store.availableUpdate = update
+        store.saveAnalysis("usenet:9", Analysis(AudioStatus.ES, listOf("spa", "en"), listOf(
+            AudioTrack(0, "spa", "Castellano", "E-AC3", 6, true), AudioTrack(1, "en", "", "TrueHD", 8, false),
+        )))
         return MainViewModel(app).also { it.loadItems(sample) }
     }
 
-    @Composable private fun Screen(vm: MainViewModel) {
+    @Composable private fun Root(vm: MainViewModel, nav: Nav, dark: Boolean = false) {
         val state by vm.state.collectAsState()
-        AppTheme { MainScreen(vm, state) {} }
+        AppTheme(dark = dark) { AppRoot(vm, state, nav) }
     }
 
-    @Test fun lista() {
+    @Test fun inicio_con_actualizacion() {
+        val vm = vm(UpdateInfo(99, "1.0.12", "https://example/Controltorbox.apk"))
+        paparazzi.snapshot { Root(vm, Nav()) }
+    }
+
+    @Test fun inicio_oscuro() {
         val vm = vm()
-        paparazzi.snapshot { Screen(vm) }
+        paparazzi.unsafeUpdateConfig(deviceConfig = DeviceConfig.PIXEL_5.copy(nightMode = NightMode.NIGHT))
+        paparazzi.snapshot { Root(vm, Nav(), dark = true) }
     }
 
-    @Test fun actualizacion() {
-        val vm = vm(UpdateInfo(7, "1.0.7", "https://example/Controltorbox.apk"))
-        paparazzi.snapshot { Screen(vm) }
+    @Test fun revisar() {
+        val vm = vm()
+        vm.decide("torrent:3", Decision.DELETE)
+        vm.decide("torrent:4", Decision.DELETE)
+        vm.decide("torrent:2", Decision.KEEP)
+        val nav = Nav().apply { open(Route.Review) }
+        paparazzi.snapshot { Root(vm, nav) }
     }
 
     @Test fun duplicados() {
         val vm = vm()
-        vm.setFilter(AudioFilter.DUPS)
-        vm.selectExtraCopies()
-        vm.clearMessage()
-        paparazzi.snapshot { Screen(vm) }
+        val nav = Nav().apply { open(Route.Dups) }
+        paparazzi.snapshot { Root(vm, nav) }
     }
 
-    @Test fun ajustes() {
+    @Test fun biblioteca() {
         val vm = vm()
-        paparazzi.snapshot { AppTheme { SettingsScreen(vm, canGoBack = true, onBack = {}, onTokenSaved = {}) } }
+        paparazzi.snapshot { Root(vm, Nav(Tab.LIBRARY)) }
+    }
+
+    @Test fun biblioteca_seleccion() {
+        val vm = vm()
+        vm.toggleSelected("torrent:3"); vm.toggleSelected("usenet:10")
+        paparazzi.snapshot { Root(vm, Nav(Tab.LIBRARY)) }
     }
 
     @Test fun ficha() {
         val vm = vm()
-        val key = "torrent:4"
-        vm.store.saveAnalysis(key, Analysis(AudioStatus.ES, listOf("en", "spa"), listOf(
-            AudioTrack(0, "en", "English", "E-AC3", 6, true),
-            AudioTrack(1, "spa", "Castellano AC3 5.1", "AC3", 6, true),
-            AudioTrack(2, "en", "Commentary", "DTS", 6, false),
-        )))
-        vm.rebuildRows()
-        val row = vm.state.value.rows.first { it.item.key == key }
+        val row = vm.state.value.row("usenet:9")!!
         paparazzi.snapshot {
             AppTheme {
-                androidx.compose.material3.Surface {
-                    ItemDetail(
-                        row = row, tracks = row.analysis!!.tracks, loadingTracks = false, error = null,
-                        position = 0.15f, durationMs = 2 * 3600_000L + 60_000, playing = 1,
-                        onLoadTracks = {}, onPosition = {}, onPositionDone = {}, onToggle = {}, onManual = {}, onClose = {},
-                    )
-                }
+                DetailContent(
+                    row = row, loadingTracks = false, error = null,
+                    playback = PlaybackUi(position = 0.15f, durationMs = 2 * 3600_000L + 60_000, playing = 0, currentMs = 1_101_000, clipStartMs = 1_089_000),
+                    onBack = {}, onLoadTracks = {}, onPosition = {}, onPositionDone = {}, onToggle = {}, onManual = {}, onDelete = {},
+                )
             }
         }
+    }
+
+    @Test fun ficha_sin_analizar() {
+        val vm = vm()
+        val row = vm.state.value.row("torrent:2")!!
+        paparazzi.snapshot {
+            AppTheme {
+                DetailContent(row, false, null, PlaybackUi(), {}, {}, {}, {}, {}, {}, {})
+            }
+        }
+    }
+
+    @Test fun ajustes() {
+        val vm = vm(UpdateInfo(99, "1.0.12", "https://example/Controltorbox.apk"))
+        paparazzi.snapshot { Root(vm, Nav(Tab.SETTINGS)) }
+    }
+
+    @Test fun bienvenida() {
+        val vm = vm(token = "")
+        paparazzi.snapshot { Root(vm, Nav()) }
     }
 }

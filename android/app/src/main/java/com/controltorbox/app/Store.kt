@@ -13,7 +13,7 @@ class Store(context: Context) {
         set(value) = prefs.edit().putString("token", value.trim()).apply()
 
     var sort: String
-        get() = prefs.getString("sort", "size_desc") ?: "size_desc"
+        get() = prefs.getString("sort", "date_desc") ?: "date_desc"
         set(value) = prefs.edit().putString("sort", value).apply()
 
     var alertSettings: AlertSettings
@@ -61,6 +61,11 @@ class Store(context: Context) {
     var notifiedUpdateCode: Int
         get() = prefs.getInt("notified_update_code", -1)
         set(v) = prefs.edit().putInt("notified_update_code", v).apply()
+
+    /** Elementos que decidiste conservar al revisar: no vuelven a salir en «Para limpiar». */
+    var kept: Set<String>
+        get() = prefs.getStringSet("kept", emptySet())?.toSet() ?: emptySet()
+        set(v) = prefs.edit().putStringSet("kept", v).apply()
 
     var lastCheck: Long
         get() = prefs.getLong("last_check", 0)
@@ -127,7 +132,8 @@ class Store(context: Context) {
     fun forget(keys: Collection<String>) {
         val a = readObj("analyses"); val m = readObj("manual")
         keys.forEach { a.remove(it); m.remove(it) }
-        prefs.edit().putString("analyses", a.toString()).putString("manual", m.toString()).apply()
+        prefs.edit().putString("analyses", a.toString()).putString("manual", m.toString())
+            .putStringSet("kept", kept - keys.toSet()).apply()
     }
 
     /** Estado del audio: marca manual > análisis > nombre. */

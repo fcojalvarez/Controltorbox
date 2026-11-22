@@ -1,36 +1,28 @@
 package com.controltorbox.app
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,151 +35,214 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(vm: MainViewModel, canGoBack: Boolean, onBack: () -> Unit, onTokenSaved: () -> Unit) {
+fun SettingsScreen(vm: MainViewModel, state: UiState) {
+    val c = C.c
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val store = vm.store
-    var tokenInput by remember { mutableStateOf("") }
-    var showToken by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
-    var tokenError by remember { mutableStateOf<String?>(null) }
     var settings by remember { mutableStateOf(store.alertSettings) }
-    var limitText by remember { mutableStateOf(settings.storageLimitGb.toString()) }
-    var checkingUpdate by remember { mutableStateOf(false) }
+    var tokenDialog by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
     var updateMsg by remember { mutableStateOf<String?>(null) }
-    val current = store.token
 
     fun update(s: AlertSettings) { settings = s; vm.saveAlertSettings(s) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Ajustes") },
-                navigationIcon = {
-                    if (canGoBack) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver") }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("API token de TorBox", fontWeight = FontWeight.SemiBold)
-            Text(
-                if (current.isNotBlank()) "Token actual: ••••••••${current.takeLast(4)}" else "No hay ningún token configurado.",
-                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = tokenInput,
-                onValueChange = { tokenInput = it; tokenError = null },
-                label = { Text("Pega aquí tu API token") },
-                singleLine = true,
-                visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                trailingIcon = { TextButton(onClick = { showToken = !showToken }) { Text(if (showToken) "Ocultar" else "Ver") } },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                "Lo encontrarás en torbox.app → Settings → API Key. Se guarda solo en este móvil.",
-                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            tokenError?.let { Text(it, color = Red, fontSize = 13.sp) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    enabled = tokenInput.isNotBlank() && !saving,
-                    onClick = {
-                        saving = true
-                        scope.launch {
-                            try {
-                                vm.saveToken(tokenInput)
-                                tokenInput = ""
-                                onTokenSaved()
-                            } catch (e: TorboxException) {
-                                tokenError = "El token no es válido: ${e.message}"
-                            } finally {
-                                saving = false
-                            }
-                        }
-                    },
-                ) { Text(if (saving) "Comprobando…" else "Guardar") }
-                if (current.isNotBlank()) OutlinedButton(onClick = { vm.clearToken() }) { Text("Borrar token") }
-            }
+    Column(
+        Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Text("Ajustes", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = c.text, modifier = Modifier.padding(vertical = 8.dp))
 
-            HorizontalDivider()
-            Text("Notificaciones", fontWeight = FontWeight.SemiBold)
-            Text(
-                "Una vez al día la app comprueba tu TorBox y si hay versión nueva, y te avisa solo de lo nuevo.",
-                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (!Notifications.canNotify(context)) {
-                Text("Las notificaciones están desactivadas para esta app en los ajustes de Android.", color = Amber, fontSize = 13.sp)
-            }
-            SwitchRow("Nuevo elemento sin audio en español", settings.notifyNoSpanish) { update(settings.copy(notifyNoSpanish = it)) }
-            SwitchRow("Nuevo duplicado (algo que ya tenías)", settings.notifyDuplicates) { update(settings.copy(notifyDuplicates = it)) }
-            SwitchRow("Espacio ocupado por encima del límite", settings.notifyStorage) { update(settings.copy(notifyStorage = it)) }
-            if (settings.notifyStorage) {
-                OutlinedTextField(
-                    value = limitText,
-                    onValueChange = { v ->
-                        limitText = v.filter(Char::isDigit).take(6)
-                        limitText.toIntOrNull()?.let { if (it > 0) update(settings.copy(storageLimitGb = it)) }
-                    },
-                    label = { Text("Límite (GB)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.width(160.dp),
-                )
-            }
-            SwitchRow("Nueva versión de la app", settings.notifyUpdates) { update(settings.copy(notifyUpdates = it)) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = { MonitorWorker.runNow(context) }) { Text("Comprobar ahora") }
-                Spacer(Modifier.width(12.dp))
-                val last = store.lastCheck
-                Text(
-                    if (last > 0) "Última: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last))
-                    else "Aún no se ha comprobado",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                "Android puede retrasar las comprobaciones para ahorrar batería. Si no te llegan avisos, quita la " +
-                    "optimización de batería para Controltorbox en los ajustes del móvil.",
-                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            HorizontalDivider()
-            Text("Actualizaciones", fontWeight = FontWeight.SemiBold)
-            Text("Versión instalada: ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val updateState by vm.state.collectAsState()
-            updateState.update?.let { u ->
-                Button(onClick = vm::installUpdate, enabled = updateState.updateProgress == null) {
-                    Text(updateState.updateProgress?.let { "Descargando… ${(it * 100).toInt()} %" } ?: "Actualizar a la versión ${u.versionName}")
+        Column {
+            SettingsGroupTitle("Cuenta de TorBox")
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    IconTile(Ic.Check, c.green, c.greenSoft, size = 40.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text("Conectado", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.text)
+                        Text("Token ••••••••${store.token.takeLast(4)}", fontSize = 12.sp, color = c.muted)
+                    }
+                    PillButton("Cambiar", { tokenDialog = true }, filled = false, height = 36.dp)
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(enabled = !checkingUpdate, onClick = {
-                    checkingUpdate = true
-                    scope.launch { updateMsg = vm.checkForUpdate(); checkingUpdate = false }
-                }) { Text(if (checkingUpdate) "Buscando…" else "Buscar actualizaciones") }
+        }
+
+        Column {
+            SettingsGroupTitle("Avisos · una vez al día")
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
+                    SwitchRow("Nuevo sin español", "Cuando añadas algo que no lo indica", settings.notifyNoSpanish) { update(settings.copy(notifyNoSpanish = it)) }
+                    HorizontalDivider(color = c.chip)
+                    SwitchRow("Nuevo duplicado", "Cuando añadas algo que ya tenías", settings.notifyDuplicates) { update(settings.copy(notifyDuplicates = it)) }
+                    HorizontalDivider(color = c.chip)
+                    Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Espacio por encima de", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.text)
+                            Text(
+                                if (settings.notifyStorage) "Ahora ocupas ${Format.size(state.totalSize)}" else "Aviso desactivado",
+                                fontSize = 12.sp, color = c.muted,
+                            )
+                        }
+                        Stepper(
+                            value = settings.storageLimitGb, enabled = settings.notifyStorage,
+                            onChange = { update(settings.copy(storageLimitGb = it)) },
+                        )
+                    }
+                    Row(Modifier.padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Avisar del espacio", fontSize = 13.sp, color = c.chipText, modifier = Modifier.weight(1f))
+                        Switch(settings.notifyStorage, { update(settings.copy(notifyStorage = it)) }, colors = switchColors())
+                    }
+                    HorizontalDivider(color = c.chip)
+                    SwitchRow("Nueva versión de la app", "Te avisa y se instala con un toque", settings.notifyUpdates) { update(settings.copy(notifyUpdates = it)) }
+                }
             }
-            updateMsg?.let { Text(it, fontSize = 13.sp) }
+            Row(Modifier.padding(start = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                val last = store.lastCheck
+                Text(
+                    if (last > 0) "Última comprobación: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last))
+                    else "Aún no se ha comprobado",
+                    fontSize = 12.sp, color = c.muted, modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { MonitorWorker.runNow(context); updateMsg = "Comprobando… te llegará un aviso si hay novedades." }) {
+                    Text("Comprobar ahora", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            if (!Notifications.canNotify(context)) {
+                Text(
+                    "Las notificaciones están desactivadas para Controltorbox en los ajustes de Android.",
+                    fontSize = 12.sp, color = c.orange, modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
+
+        Column {
+            SettingsGroupTitle("Aplicación")
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Versión ${BuildConfig.VERSION_NAME}", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.text)
+                        val u = state.update
+                        Text(
+                            when {
+                                u != null -> "Hay una versión nueva: ${u.versionName}"
+                                updateMsg != null -> updateMsg!!
+                                else -> "Se comprueba una vez al día"
+                            },
+                            fontSize = 12.sp, color = if (u != null) c.accent else c.muted, fontWeight = if (u != null) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                    if (state.update != null) {
+                        PillButton(
+                            state.updateProgress?.let { "${(it * 100).toInt()} %" } ?: "Instalar", vm::installUpdate,
+                            enabled = state.updateProgress == null, height = 36.dp,
+                        )
+                    } else {
+                        PillButton(
+                            if (checking) "Buscando…" else "Buscar", filled = false, enabled = !checking, height = 36.dp,
+                            onClick = { checking = true; scope.launch { updateMsg = vm.checkForUpdate(); checking = false } },
+                        )
+                    }
+                }
+            }
+            Text(
+                "Android puede retrasar la comprobación diaria para ahorrar batería. Si no te llegan avisos, quita la optimización de batería para Controltorbox.",
+                fontSize = 12.sp, lineHeight = 17.sp, color = c.muted, modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+            )
+        }
+    }
+
+    if (tokenDialog) TokenDialog(vm, onDismiss = { tokenDialog = false })
+}
+
+@Composable
+private fun switchColors() = SwitchDefaults.colors(checkedTrackColor = C.c.accent, checkedThumbColor = C.c.onAccent)
+
+@Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    val c = C.c
+    Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.text)
+            Text(subtitle, fontSize = 12.sp, color = c.muted)
+        }
+        Switch(checked, onChange, colors = switchColors())
+    }
+}
+
+@Composable
+private fun Stepper(value: Int, enabled: Boolean, onChange: (Int) -> Unit) {
+    val c = C.c
+    val step = if (value >= 1000) 250 else 50
+    Row(
+        Modifier.border(1.dp, c.borderStrong, RoundedCornerShape(20.dp)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = { onChange((value - step).coerceAtLeast(50)) }, enabled = enabled && value > 50, modifier = Modifier.size(40.dp)) {
+            Text("−", fontSize = 18.sp, color = if (enabled) c.text else c.faint)
+        }
+        Text(
+            "$value GB", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (enabled) c.text else c.faint,
+            textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 72.dp),
+        )
+        IconButton(onClick = { onChange(value + step) }, enabled = enabled, modifier = Modifier.size(40.dp)) {
+            Text("+", fontSize = 18.sp, color = if (enabled) c.text else c.faint)
         }
     }
 }
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f), fontSize = 14.sp)
-        Switch(checked = checked, onCheckedChange = onChange)
+private fun TokenDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+    val c = C.c
+    val scope = rememberCoroutineScope()
+    var token by remember { mutableStateOf("") }
+    var show by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var confirmLogout by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Cambiar token") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = token, onValueChange = { token = it; error = null },
+                    label = { Text("Nuevo API token") }, singleLine = true,
+                    visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = { TextButton(onClick = { show = !show }) { Text(if (show) "Ocultar" else "Ver") } },
+                )
+                error?.let { Text(it, color = c.orange, fontSize = 13.sp) }
+                TextButton(onClick = { confirmLogout = true }) { Text("Desconectar esta cuenta", color = c.orange) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = token.isNotBlank() && !saving,
+                onClick = {
+                    saving = true
+                    scope.launch {
+                        try { vm.saveToken(token); onDismiss() } catch (e: TorboxException) { error = "No es válido: ${e.message}" } finally { saving = false }
+                    }
+                },
+            ) { Text(if (saving) "Comprobando…" else "Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("¿Desconectar?") },
+            text = { Text("Se borrará el token de este móvil. Tus archivos de TorBox no se tocan.") },
+            confirmButton = { TextButton(onClick = { confirmLogout = false; vm.clearToken(); onDismiss() }) { Text("Desconectar", color = c.orange) } },
+            dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("Cancelar") } },
+        )
     }
 }
