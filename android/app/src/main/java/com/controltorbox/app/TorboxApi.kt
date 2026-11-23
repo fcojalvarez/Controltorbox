@@ -90,12 +90,35 @@ class TorboxApi(
         (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { parseQueued(kind, it) } }
     }
 
-    /** Iniciar («start») o borrar («delete») algo de la cola. */
+    /** Cola de los tres tipos, sin repetidos (por si TorBox devuelve la misma cola para cada tipo). */
+    suspend fun queuedAll(): List<QueuedItem> =
+        Kind.entries.flatMap { k -> runCatching { queued(k) }.getOrDefault(emptyList()) }.distinctBy { it.kind to it.id }
+
+    /**
+     * Iniciar («start») o borrar («delete») algo de la cola.
+     *
+     * La API no documenta el formato exacto. Se envía primero lo mismo que una CLI de TorBox
+     * que funciona con la API real ({queued_id, operation}); si TorBox no lo acepta, se prueba
+     * añadiendo el tipo, y para iniciar también «resume» (la CLI lo llama así).
+     */
     suspend fun controlQueued(item: QueuedItem, operation: String): Unit = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("queued_id", item.id).put("operation", operation).put("type", item.kind.key)
-            .put("all", false).toString()
-        execute(Request.Builder().url(url("queued/controlqueued")).post(body.toRequestBody(JSON)).build())
-        Unit
+        val ops = if (operation == "start") listOf("start", "resume") else listOf(operation)
+        val bodies = ops.flatMap { op ->
+            listOf(
+                JSONObject().put("queued_id", item.id).put("operation", op),
+                JSONObject().put("queued_id", item.id).put("operation", op).put("type", item.kind.key),
+            )
+        }
+        var last: TorboxException? = null
+        for (b in bodies) {
+            try {
+                execute(Request.Builder().url(url("queued/controlqueued")).post(b.toString().toRequestBody(JSON)).build())
+                return@withContext
+            } catch (e: TorboxException) {
+                last = e
+            }
+        }
+        throw last ?: TorboxException("TorBox no aceptó la operación sobre la cola.")
     }
 
     /** Plan de la cuenta y, si TorBox lo indica, su límite de almacenamiento. */
@@ -192,7 +215,8 @@ class TorboxApi(
 
         /** Elemento de la cola de TorBox (aún no empezado). */
         fun parseQueued(kind: Kind, o: JSONObject): QueuedItem = QueuedItem(
-            kind = kind,
+            // Si el elemento dice su tipo, manda sobre el que se pidió.
+            kind = Kind.entries.firstOrNull { it.key == o.str("type").lowercase() } ?: kind,
             id = o.optLong("id"),
             name = o.str("name").ifBlank { "${kind.label} en cola ${o.optLong("id")}" },
             createdAt = o.str("created_at", "createdAt").takeIf { it.isNotBlank() },

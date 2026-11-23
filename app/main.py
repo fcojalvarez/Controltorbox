@@ -652,12 +652,18 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/queued")
     def list_queued(client=Depends(get_client)):
         """Cola de TorBox de los tres tipos (si uno falla, se ignora)."""
-        out = []
+        out, seen = [], set()
         for kind in KINDS:
             try:
                 for q in client.queued(kind):
+                    # Si el elemento dice su tipo, manda; y sin repetidos por si TorBox ignora «type».
+                    k = str(q.get("type") or "").lower()
+                    k = k if k in KINDS else kind
+                    if (k, q.get("id")) in seen:
+                        continue
+                    seen.add((k, q.get("id")))
                     out.append({
-                        "kind": kind, "id": q.get("id"), "name": q.get("name") or f"{kind} en cola",
+                        "kind": k, "id": q.get("id"), "name": q.get("name") or f"{k} en cola",
                         "title": titles.clean(q.get("name") or ""),
                         "created_at": _field(q, "created_at", "createdAt"),
                     })

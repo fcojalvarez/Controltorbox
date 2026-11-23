@@ -240,7 +240,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 rebuildRows()
                 _state.update { it.copy(error = errors.takeIf { e -> e.isNotEmpty() }?.joinToString("\n")) }
                 // Cola de TorBox (si falla un tipo, se ignora).
-                val queued = Kind.entries.flatMap { k -> runCatching { api().queued(k) }.getOrDefault(emptyList()) }
+                val queued = api().queuedAll()
                 _state.update { it.copy(queued = queued) }
                 // Plan y límite de la cuenta (si falla, se mantiene lo último guardado).
                 try {

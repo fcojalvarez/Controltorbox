@@ -112,12 +112,25 @@ class TorboxClient:
         return self._unwrap(resp) or []
 
     def control_queued(self, kind: str, queued_id: int, operation: str) -> None:
-        """Iniciar («start») o borrar («delete») algo de la cola."""
-        resp = self._client.post(
-            "/queued/controlqueued",
-            json={"queued_id": int(queued_id), "operation": operation, "type": kind, "all": False},
-        )
-        self._unwrap(resp)
+        """Iniciar («start») o borrar («delete») algo de la cola.
+
+        La API no documenta el formato exacto. Se envía primero lo mismo que una CLI de TorBox
+        que funciona con la API real ({queued_id, operation}); si no lo acepta, se prueba con el
+        tipo, y para iniciar también «resume».
+        """
+        ops = ["start", "resume"] if operation == "start" else [operation]
+        bodies = []
+        for op in ops:
+            bodies.append({"queued_id": int(queued_id), "operation": op})
+            bodies.append({"queued_id": int(queued_id), "operation": op, "type": kind})
+        last = None
+        for body in bodies:
+            try:
+                self._unwrap(self._client.post("/queued/controlqueued", json=body))
+                return
+            except TorboxError as exc:
+                last = exc
+        raise last
 
     def account(self) -> dict:
         """Plan de la cuenta y, si TorBox lo indica, su límite de almacenamiento en bytes."""

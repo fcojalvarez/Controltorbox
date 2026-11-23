@@ -365,11 +365,15 @@ def test_control_and_queue_endpoints(tmp_path, monkeypatch):
     def handler(r):
         path = r.url.path.removeprefix("/v1/api")
         if r.method == "POST":
-            calls.append((path, json.loads(r.read())))
+            body = json.loads(r.read())
+            calls.append((path, body))
+            # Simula una API que no admite «type» en la cola y solo acepta «resume» para iniciar.
+            if path == "/queued/controlqueued" and ("type" in body or body["operation"] == "start"):
+                return httpx.Response(500, json={"success": False, "detail": "Requested Queued Download does not exist for this user."})
             return httpx.Response(200, json={"success": True, "data": None})
         if path == "/queued/getqueued":
-            t = r.url.params["type"]
-            data = [{"id": 7, "name": "Show.S01.1080p", "created_at": "2026-11-22T10:00:00Z"}] if t == "usenet" else []
+            # Ignora «type»: misma cola para cada tipo, con el tipo en el elemento.
+            data = [{"id": 7, "name": "Show.S01.1080p", "created_at": "2026-11-22T10:00:00Z", "type": "usenet"}]
             return httpx.Response(200, json={"success": True, "data": data})
         return httpx.Response(200, json={"success": True, "data": []})
 
@@ -378,8 +382,10 @@ def test_control_and_queue_endpoints(tmp_path, monkeypatch):
     client = TestClient(create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path))
     q = client.get("/api/queued").json()["queued"]
     assert q == [{"kind": "usenet", "id": 7, "name": "Show.S01.1080p", "title": "Show · T1", "created_at": "2026-11-22T10:00:00Z"}]
+    assert client.post("/api/queued/usenet/7", json={"operation": "delete"}).status_code == 200
+    assert calls[-1] == ("/queued/controlqueued", {"queued_id": 7, "operation": "delete"})
     assert client.post("/api/queued/usenet/7", json={"operation": "start"}).status_code == 200
-    assert calls[-1] == ("/queued/controlqueued", {"queued_id": 7, "operation": "start", "type": "usenet", "all": False})
+    assert calls[-1] == ("/queued/controlqueued", {"queued_id": 7, "operation": "resume"})
     assert client.post("/api/items/torrent/5/control", json={"operation": "reannounce"}).status_code == 200
     assert calls[-1] == ("/torrents/controltorrent", {"torrent_id": 5, "operation": "reannounce", "all": False})
     assert client.post("/api/items/torrent/5/control", json={"operation": "delete"}).status_code == 422  # borrar va por /api/delete

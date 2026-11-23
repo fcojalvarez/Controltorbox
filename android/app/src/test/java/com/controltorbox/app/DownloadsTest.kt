@@ -95,8 +95,16 @@ class DownloadsTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests += request
                 val path = request.requestUrl!!.encodedPath.removePrefix("/v1/api/")
+                if (path == "queued/controlqueued") {
+                    val b = JSONObject(request.body.peek().readUtf8())
+                    // Simula una API que solo acepta «resume» para iniciar y no admite el campo «type».
+                    val ok = !b.has("type") && b.getString("operation") in setOf("delete", "resume")
+                    return if (ok) MockResponse().setBody("""{"success":true,"data":null}""")
+                    else MockResponse().setResponseCode(500).setBody("""{"success":false,"detail":"Requested Queued Download does not exist for this user."}""")
+                }
                 val data = when (path) {
-                    "queued/getqueued" -> """[{"id":77,"name":"Show.S01.1080p","created_at":"2026-11-22T10:00:00Z","hash":"abc"}]"""
+                    // La API ignora «type» y devuelve siempre la misma cola, con su tipo en cada elemento.
+                    "queued/getqueued" -> """[{"id":77,"name":"Show.S01.1080p","created_at":"2026-11-22T10:00:00Z","hash":"abc","type":"usenet"}]"""
                     else -> "null"
                 }
                 return MockResponse().setBody("""{"success":true,"data":$data}""")
@@ -105,14 +113,19 @@ class DownloadsTest {
         server.start()
         try {
             val api = TorboxApi("good", server.url("/v1/api/").toString())
-            val q = api.queued(Kind.USENET).single()
+            val all = api.queuedAll()
+            assertEquals(1, all.size)                       // sin repetidos aunque se pida por cada tipo
+            val q = all.single()
             assertEquals(77L, q.id)
-            assertEquals("usenet", requests.last().requestUrl!!.queryParameter("type"))
-            api.controlQueued(q, "start")
-            val body = JSONObject(requests.last().body.readUtf8())
-            assertEquals(77, body.getInt("queued_id"))
-            assertEquals("start", body.getString("operation"))
-            assertEquals("usenet", body.getString("type"))
+            assertEquals(Kind.USENET, q.kind)               // el tipo del elemento manda
+            api.controlQueued(q, "delete")
+            val del = JSONObject(requests.last().body.readUtf8())
+            assertEquals(77, del.getInt("queued_id"))
+            assertEquals("delete", del.getString("operation"))
+            assertFalse(del.has("type"))                    // como la CLI: sin «type» ni «all»
+            assertFalse(del.has("all"))
+            api.controlQueued(q, "start")                   // «start» falla → se reintenta con «resume»
+            assertEquals("resume", JSONObject(requests.last().body.readUtf8()).getString("operation"))
             api.control(Kind.TORRENT, 5, "reannounce")
             val r = requests.last()
             assertEquals("/v1/api/torrents/controltorrent", r.requestUrl!!.encodedPath)
