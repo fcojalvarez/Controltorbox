@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+# Si se suben varios cambios seguidos, solo se publica el último (evita que una
+# compilación antigua pise a la nueva en «android-latest»).
+concurrency:
+  group: android-release
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
