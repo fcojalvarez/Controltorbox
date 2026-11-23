@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
             FILTER_NO_ES -> { nav.goTab(Tab.HOME); nav.open(Route.Review) }
             FILTER_DUPS -> { nav.goTab(Tab.HOME); nav.open(Route.Dups) }
             SHOW_UPDATE -> { nav.goTab(Tab.HOME); vm.reloadUpdate() }
+            FILTER_EXPIRING -> { nav.goTab(Tab.LIBRARY); vm.setFilter(LibraryFilter.EXPIRING) }
         }
     }
 
@@ -62,5 +63,6 @@ class MainActivity : ComponentActivity() {
         const val FILTER_NO_ES = "no_es"
         const val FILTER_DUPS = "dups"
         const val SHOW_UPDATE = "update"
+        const val FILTER_EXPIRING = "expiring"
     }
 }

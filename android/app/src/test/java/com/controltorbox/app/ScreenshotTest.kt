@@ -31,6 +31,48 @@ class ScreenshotTest {
         TorboxItem(kind, id, name, (gb * GB).toLong(), date, "", true,
             files.mapIndexed { i, f -> TorboxFile(id * 10 + i, f, f, (gb * GB / files.size).toLong()) })
 
+    private fun downloading(kind: Kind, id: Long, name: String, gb: Double, progress: Float, speedMb: Long, seeds: Int, state: String = "downloading") =
+        TorboxItem(kind, id, name, (gb * GB).toLong(), ago(0), "", false, emptyList(), state, progress, speedMb * 1024 * 1024, 1500, seeds, 4, null, null)
+
+    private fun withDownloads(vm: MainViewModel) {
+        vm.loadItems((sample + listOf(
+            downloading(Kind.TORRENT, 30, "Severance.S02E05.1080p.WEB", 2.4, 0.62f, 8, 23),
+            downloading(Kind.TORRENT, 31, "Old.Movie.1999.720p.BluRay", 1.1, 0.12f, 0, 0, "stalled (no seeds)"),
+            downloading(Kind.USENET, 32, "Andor.S02E01.2160p", 6.0, 0.35f, 22, 0),
+        )).map { if (it.id == 4L) it.copy(expiresAt = now.plus(2, ChronoUnit.DAYS).toString()) else if (it.id == 3L) it.copy(expiresAt = now.plus(5, ChronoUnit.DAYS).toString()) else it })
+        vm.setStateForPreview { it.copy(queued = listOf(
+            QueuedItem(Kind.TORRENT, 40, "Dune.Prophecy.S01.1080p", ago(1), "x"),
+            QueuedItem(Kind.USENET, 41, "The.Last.of.Us.S02E03.2160p", ago(0), "y"),
+        )) }
+    }
+
+    @Test fun inicio_con_descargas() {
+        val vm = vm()
+        withDownloads(vm)
+        paparazzi.snapshot { Root(vm, Nav()) }
+    }
+
+    @Test fun descargas() {
+        val vm = vm()
+        withDownloads(vm)
+        val nav = Nav().apply { open(Route.Downloads) }
+        paparazzi.snapshot { Root(vm, nav) }
+    }
+
+    @Test fun biblioteca_caduca() {
+        val vm = vm()
+        withDownloads(vm)
+        vm.setFilter(LibraryFilter.EXPIRING)
+        paparazzi.snapshot { Root(vm, Nav(Tab.LIBRARY)) }
+    }
+
+    @Test fun ficha_atascada() {
+        val vm = vm()
+        withDownloads(vm)
+        val row = vm.state.value.row("torrent:31")!!
+        paparazzi.snapshot { AppTheme { DetailContent(row, false, null, PlaybackUi(), {}, {}, {}, {}, {}, {}, {}) } }
+    }
+
     private val sample = listOf(
         item(Kind.TORRENT, 1, "Dune.Part.Two.2024.2160p.WEB-DL.Castellano.AC3", 18.0, ago(51)),
         item(Kind.TORRENT, 2, "The.Bear.S03.1080p.WEB.h264-ETHEL", 9.0, ago(2),

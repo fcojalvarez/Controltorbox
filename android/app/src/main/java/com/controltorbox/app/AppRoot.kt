@@ -59,6 +59,7 @@ enum class Tab(val label: String) { HOME("Inicio"), LIBRARY("Biblioteca"), SETTI
 sealed interface Route {
     data object Review : Route
     data object Dups : Route
+    data object Downloads : Route
     data class Detail(val key: String) : Route
 }
 
@@ -109,6 +110,7 @@ fun AppRoot(vm: MainViewModel, state: UiState, nav: Nav = remember { Nav() }, on
                 }
                 Route.Review -> ReviewScreen(vm, state, nav)
                 Route.Dups -> DuplicatesScreen(vm, state, nav)
+                Route.Downloads -> DownloadsScreen(vm, state, nav)
                 is Route.Detail -> {
                     val row = state.row(top.key)
                     if (row == null) LaunchedEffect(top) { nav.back() } else DetailScreen(vm, row, nav)

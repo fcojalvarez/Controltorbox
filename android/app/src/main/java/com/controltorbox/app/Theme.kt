@@ -120,6 +120,7 @@ object Ic {
     val Close = stroke("close", "M6 6l12 12", "M18 6L6 18")
     val Movie = stroke("movie", "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", "M7 4v16", "M17 4v16")
     val Tv = stroke("tv", "M5 6h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M8 21h8")
+    val Clock = stroke("clock", "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0z", "M12 7v5l3 2")
     val Muted = stroke("muted", "M5 5l14 14", "M7 4l13 8-4 2.5", "M7 11v9l5-3")
     val Play: ImageVector = ImageVector.Builder("play", 24.dp, 24.dp, 24f, 24f)
         .apply { addPath(addPathNodes("M7 4l13 8-13 8z"), fill = SolidColor(Color.Black)) }.build()

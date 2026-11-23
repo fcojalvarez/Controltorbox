@@ -53,6 +53,22 @@ fun HomeScreen(vm: MainViewModel, state: UiState, nav: Nav) {
 
         StorageCard(state)
 
+        if (state.downloading.isNotEmpty() || state.queued.isNotEmpty()) {
+            val stalled = state.stalledCount
+            val active = state.downloading.size - stalled
+            TaskCard(
+                icon = Ic.Download, tint = if (stalled > 0) c.orange else c.accent, tileBg = if (stalled > 0) c.orangeSoft else c.accentSoft,
+                title = "Descargas",
+                subtitle = listOfNotNull(
+                    if (active > 0) "$active descargando" else null,
+                    if (stalled > 0) "$stalled atascada${if (stalled > 1) "s" else ""}" else null,
+                    if (state.queued.isNotEmpty()) "${state.queued.size} en cola" else null,
+                ).joinToString(" · "),
+                action = "Ver", actionColor = if (stalled > 0) c.orange else c.accent, enabled = true,
+                onClick = { nav.open(Route.Downloads) },
+            )
+        }
+
         Column {
             SectionTitle("Para limpiar")
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -80,6 +96,18 @@ fun HomeScreen(vm: MainViewModel, state: UiState, nav: Nav) {
                     action = "Revisar", actionColor = c.accent, enabled = state.duplicateGroups.isNotEmpty(),
                     onClick = { nav.open(Route.Dups) },
                 )
+                val expiring = state.expiringRows
+                if (expiring.isNotEmpty()) {
+                    val first = expiring.first().item.expiresAtInstant
+                    TaskCard(
+                        icon = Ic.Clock, tint = c.orange, tileBg = c.orangeSoft,
+                        title = "Caduca pronto",
+                        subtitle = "${expiring.size} elemento${if (expiring.size > 1) "s" else ""}" +
+                            (first?.let { " · el primero ${Expiry.label(it)}" } ?: ""),
+                        action = "Ver", actionColor = c.orange, enabled = true,
+                        onClick = { vm.setFilter(LibraryFilter.EXPIRING); nav.goTab(Tab.LIBRARY) },
+                    )
+                }
                 AppCard(radius = 16.dp) {
                     Row(Modifier.padding(start = 16.dp, end = 14.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         IconTile(Ic.Wave, c.chipText, c.chip)

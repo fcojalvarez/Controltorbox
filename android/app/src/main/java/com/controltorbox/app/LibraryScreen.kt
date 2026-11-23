@@ -84,8 +84,11 @@ fun LibraryScreen(vm: MainViewModel, state: UiState, nav: Nav) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        LibraryFilter.entries.forEach { f ->
+                        // El filtro «Caduca pronto», si está activo, va primero para que se vea.
+                        LibraryFilter.entries.sortedBy { if (it == LibraryFilter.EXPIRING && state.filter == it) 0 else 1 }.forEach { f ->
                             val n = state.countFor(f)
+                            // «Caduca pronto» solo aparece si hay algo que caduca.
+                            if (f == LibraryFilter.EXPIRING && n == 0 && state.filter != f) return@forEach
                             val sel = state.filter == f
                             FilterChip(
                                 selected = sel, onClick = { vm.setFilter(f) },

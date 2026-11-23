@@ -35,8 +35,42 @@ data class TorboxItem(
     val hash: String,
     val downloadFinished: Boolean,
     val files: List<TorboxFile>,
+    /** Estado de descarga según TorBox («downloading», «stalled (no seeds)», «paused»…). */
+    val state: String = "",
+    /** Progreso de 0 a 1. */
+    val progress: Float = if (downloadFinished) 1f else 0f,
+    val downloadSpeed: Long = 0,
+    /** Segundos que faltan (null si TorBox no lo sabe). */
+    val eta: Long? = null,
+    val seeds: Int? = null,
+    val peers: Int? = null,
+    val availability: Double? = null,
+    /** Cuándo lo quitará TorBox (null si no caduca o no lo indica). */
+    val expiresAt: String? = null,
 ) {
     val key: String get() = "${kind.key}:$id"
+
+    val expiresAtInstant: java.time.Instant? get() = UiState.parseDate(expiresAt)
+
+    /** Aún descargándose (o parado sin terminar). */
+    val inProgress: Boolean get() = !downloadFinished
+
+    val paused: Boolean get() = state.contains("pause", ignoreCase = true)
+
+    /**
+     * Atascada: sin terminar y TorBox dice «stalled»/error, o sin fuentes ni velocidad.
+     * Las pausadas no cuentan como atascadas.
+     */
+    val stalled: Boolean
+        get() {
+            if (downloadFinished || paused) return false
+            val s = state.lowercase()
+            if ("stalled" in s || "error" in s || "missing" in s || "failed" in s) return true
+            // Fuentes y disponibilidad solo tienen sentido en torrents (Usenet no tiene «seeds»).
+            if (kind != Kind.TORRENT) return false
+            val noSources = (seeds ?: -1) == 0 || (availability != null && availability < 1.0)
+            return noSources && downloadSpeed == 0L
+        }
     val mainVideo: TorboxFile? get() = Language.pickMainVideo(files)
 
     /** Archivos de vídeo sin «samples», ordenados por nombre (los episodios de una temporada). */
@@ -49,6 +83,11 @@ data class TorboxItem(
             }.sortedBy { it.displayName.lowercase() }
         }
     val totalSize: Long get() = if (size > 0) size else files.sumOf { it.size }
+}
+
+/** Algo en la cola de TorBox, esperando a empezar. */
+data class QueuedItem(val kind: Kind, val id: Long, val name: String, val createdAt: String?, val hash: String) {
+    val key: String get() = "queued:${kind.key}:$id"
 }
 
 /** Datos de la cuenta de TorBox. */

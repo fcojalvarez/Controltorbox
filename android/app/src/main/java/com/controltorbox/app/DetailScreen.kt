@@ -152,6 +152,9 @@ fun DetailScreen(vm: MainViewModel, row: ItemRow, nav: Nav) {
         loadingText = loadingText,
         selectedEpisode = currentEp?.fileId,
         onSelectEpisode = { id -> if (id != currentEp?.fileId) { preview.stop(); playing = -1; durationMs = null; selectedEp = id } },
+        onReannounce = { vm.reannounce(item) },
+        onPause = { vm.pause(item) },
+        onResume = { vm.resume(item) },
         error = error,
         playback = PlaybackUi(position, durationMs, playing, currentMs, clipStart),
         onBack = { preview.stop(); nav.back() },
@@ -185,6 +188,9 @@ fun DetailContent(
     loadingText: String? = null,
     selectedEpisode: Long? = null,
     onSelectEpisode: (Long) -> Unit = {},
+    onReannounce: () -> Unit = {},
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
 ) {
     val c = C.c
     val item = row.item
@@ -208,7 +214,17 @@ fun DetailContent(
                 )
                 Text(item.name, fontSize = 12.sp, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
                 row.duplicate?.let { Text("Tienes otra copia de «${it.label}»", fontSize = 13.sp, color = c.accent, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp)) }
+                item.expiresAtInstant?.let { at ->
+                    val soon = Expiry.isSoon(at)
+                    Text(
+                        "TorBox lo quitará el ${Dates.short(at)} · ${Expiry.label(at)}",
+                        fontSize = 13.sp, color = if (soon) c.orange else c.muted,
+                        fontWeight = if (soon) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
             }
+
+            if (item.inProgress) DownloadStatusCard(item, onReannounce, onPause, onResume)
 
             StatusBanner(row)
 
@@ -466,6 +482,36 @@ private fun EpisodePicker(episodes: List<EpisodeAnalysis>, selected: Long?, onSe
                     Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
                     Text("  ${e.label}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (sel) c.surface else c.text)
                 }
+            }
+        }
+    }
+}
+
+/** Estado de una descarga sin terminar, con sus acciones. */
+@Composable
+private fun DownloadStatusCard(item: TorboxItem, onReannounce: () -> Unit, onPause: () -> Unit, onResume: () -> Unit) {
+    val c = C.c
+    AppCard(modifier = Modifier.fillMaxWidth(), border = if (item.stalled) BorderStroke(2.dp, c.orange) else null) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                when { item.stalled -> "Descarga atascada"; item.paused -> "Descarga en pausa"; else -> "Descargando" },
+                fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (item.stalled) c.orange else c.text,
+            )
+            LinearProgressIndicator(
+                progress = { item.progress }, modifier = Modifier.fillMaxWidth(),
+                color = if (item.stalled) c.orange else c.accent, trackColor = c.chip,
+            )
+            Text(downloadLine(item), fontSize = 12.sp, color = c.chipText)
+            if (item.stalled) {
+                Text(
+                    "No encuentra fuentes. Reanunciar pide a TorBox que las busque otra vez; si sigue igual, quizá convenga borrarla.",
+                    fontSize = 12.sp, color = c.muted,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (item.kind == Kind.TORRENT && !item.paused) PillButton("Reanunciar", onReannounce, filled = item.stalled, height = 36.dp)
+                if (item.paused) PillButton("Reanudar", onResume, height = 36.dp)
+                else if (item.kind == Kind.USENET) PillButton("Pausar", onPause, filled = false, height = 36.dp)
             }
         }
     }

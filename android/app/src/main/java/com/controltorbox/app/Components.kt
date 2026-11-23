@@ -218,12 +218,18 @@ fun ItemLine(row: ItemRow, showIcon: Boolean = true, trailingDup: Boolean = true
         }
         Column(Modifier.weight(1f)) {
             Text(row.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val expiry = row.item.expiresAtInstant?.takeIf { Expiry.isSoon(it) }
             val meta = metaOverride ?: listOfNotNull(
+                expiry?.let { Expiry.label(it).replaceFirstChar { c -> c.uppercase() } },
+                if (row.item.inProgress) (if (row.item.stalled) "Atascada" else "${(row.item.progress * 100).toInt()} % descargado") else null,
                 row.quality.takeIf { it.isNotBlank() } ?: if (row.item.files.size > 1) "${row.item.files.size} archivos" else null,
                 Format.size(row.size),
-                Dates.short(row.createdAt),
+                Dates.short(row.createdAt).takeIf { expiry == null },
             ).joinToString(" · ")
-            Text(meta, fontSize = 12.sp, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                meta, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (expiry != null || row.item.stalled) c.orange else c.muted,
+            )
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (row.hasVideo) StatusBadge(row.status)

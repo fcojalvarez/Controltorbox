@@ -123,6 +123,8 @@ fun SettingsScreen(vm: MainViewModel, state: UiState) {
                         Switch(settings.notifyStorage, { update(settings.copy(notifyStorage = it)) }, colors = switchColors())
                     }
                     HorizontalDivider(color = c.chip)
+                    SwitchRow("Caduca pronto", "Cuando TorBox vaya a quitar algo en 3 días o menos", settings.notifyExpiring) { update(settings.copy(notifyExpiring = it)) }
+                    HorizontalDivider(color = c.chip)
                     SwitchRow("Nueva versión de la app", "Te avisa y se instala con un toque", settings.notifyUpdates) { update(settings.copy(notifyUpdates = it)) }
                 }
             }

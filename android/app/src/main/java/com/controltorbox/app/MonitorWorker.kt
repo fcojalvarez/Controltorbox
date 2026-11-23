@@ -88,7 +88,7 @@ object Notifications {
     fun createChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(CHANNEL, "Avisos de TorBox", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Nuevos elementos sin español, duplicados, espacio ocupado y nuevas versiones"
+                description = "Nuevos sin español, duplicados, caducidad, espacio ocupado y nuevas versiones"
             }
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
@@ -105,6 +105,7 @@ object Notifications {
             is Alert.NoSpanish -> MainActivity.FILTER_NO_ES
             is Alert.Duplicate -> MainActivity.FILTER_DUPS
             is Alert.Update -> MainActivity.SHOW_UPDATE
+            is Alert.Expiring -> MainActivity.FILTER_EXPIRING
             is Alert.Storage -> null
         }
         val intent = Intent(context, MainActivity::class.java)

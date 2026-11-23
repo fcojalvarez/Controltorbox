@@ -23,6 +23,7 @@ class Store(context: Context) {
             notifyStorage = prefs.getBoolean("notify_storage", true),
             storageLimitGb = prefs.getInt("storage_limit_gb", 500),
             notifyUpdates = prefs.getBoolean("notify_updates", true),
+            notifyExpiring = prefs.getBoolean("notify_expiring", true),
         )
         set(s) = prefs.edit()
             .putBoolean("notify_no_es", s.notifyNoSpanish)
@@ -30,17 +31,22 @@ class Store(context: Context) {
             .putBoolean("notify_storage", s.notifyStorage)
             .putInt("storage_limit_gb", s.storageLimitGb)
             .putBoolean("notify_updates", s.notifyUpdates)
+            .putBoolean("notify_expiring", s.notifyExpiring)
             .apply()
 
     var monitorState: MonitorState?
         get() {
             val keys = prefs.getStringSet("known_keys", null) ?: return null
-            return MonitorState(keys.toSet(), prefs.getBoolean("storage_alerted", false))
+            return MonitorState(
+                keys.toSet(), prefs.getBoolean("storage_alerted", false),
+                prefs.getStringSet("expiring_alerted", emptySet())?.toSet() ?: emptySet(),
+            )
         }
         set(s) {
             val e = prefs.edit()
-            if (s == null) e.remove("known_keys").remove("storage_alerted")
+            if (s == null) e.remove("known_keys").remove("storage_alerted").remove("expiring_alerted")
             else e.putStringSet("known_keys", s.knownKeys).putBoolean("storage_alerted", s.storageAlerted)
+                .putStringSet("expiring_alerted", s.expiringAlerted)
             e.apply()
         }
 

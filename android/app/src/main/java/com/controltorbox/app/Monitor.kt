@@ -1,5 +1,7 @@
 package com.controltorbox.app
 
+import java.time.Instant
+
 /** Ajustes de los avisos. */
 data class AlertSettings(
     val notifyNoSpanish: Boolean = true,
@@ -7,10 +9,16 @@ data class AlertSettings(
     val notifyStorage: Boolean = true,
     val storageLimitGb: Int = 500,
     val notifyUpdates: Boolean = true,
+    val notifyExpiring: Boolean = true,
 )
 
 /** Lo que recordamos entre comprobaciones. */
-data class MonitorState(val knownKeys: Set<String>, val storageAlerted: Boolean)
+data class MonitorState(
+    val knownKeys: Set<String>,
+    val storageAlerted: Boolean,
+    /** Elementos de los que ya se avisó que caducan (para no repetir). */
+    val expiringAlerted: Set<String> = emptySet(),
+)
 
 sealed class Alert {
     abstract val id: Int
@@ -38,6 +46,12 @@ sealed class Alert {
         override val text = "La versión ${info.versionName} está disponible. Toca para actualizar."
     }
 
+    data class Expiring(val items: List<Pair<TorboxItem, Instant>>, val now: Instant) : Alert() {
+        override val id = 1005
+        override val title = if (items.size == 1) "Caduca pronto en TorBox" else "${items.size} elementos caducan pronto"
+        override val text = items.joinToString("\n") { (item, at) -> "• ${Titles.clean(item.name)} (${Expiry.label(at, now)})" }
+    }
+
     data class Storage(val usedBytes: Long, val limitGb: Int) : Alert() {
         override val id = 1003
         override val title = "Almacenamiento de TorBox por encima de $limitGb GB"
@@ -56,6 +70,7 @@ object Monitor {
         previous: MonitorState?,
         items: List<TorboxItem>,
         settings: AlertSettings,
+        now: Instant = Instant.now(),
         statusOf: (TorboxItem) -> AudioStatus = { Language.guessFromName(it.name, it.mainVideo?.displayName) },
     ): Pair<List<Alert>, MonitorState> {
         val keys = items.map { it.key }.toSet()
@@ -82,7 +97,41 @@ object Monitor {
         if (settings.notifyStorage && overLimit && !previous.storageAlerted) {
             alerts += Alert.Storage(used, settings.storageLimitGb)
         }
-        return alerts to MonitorState(keys, overLimit)
+        // Caducidad: una sola vez por elemento, cuando le quedan pocos días.
+        var expiringAlerted = previous.expiringAlerted intersect keys
+        if (settings.notifyExpiring) {
+            val soon = items.mapNotNull { it.expiresAtInstant?.let { at -> it to at } }
+                .filter { (item, at) -> item.key !in expiringAlerted && Expiry.isNotifiable(at, now) }
+                .sortedBy { it.second }
+            if (soon.isNotEmpty()) {
+                alerts += Alert.Expiring(soon, now)
+                expiringAlerted = expiringAlerted + soon.map { it.first.key }
+            }
+        }
+        return alerts to MonitorState(keys, overLimit, expiringAlerted)
+    }
+}
+
+/** Caducidad de los elementos de TorBox. */
+object Expiry {
+    /** Se muestra «Caduca pronto» con 7 días o menos; se avisa con 3 días o menos. */
+    const val SOON_DAYS = 7L
+    const val NOTIFY_DAYS = 3L
+
+    private fun hoursLeft(at: Instant, now: Instant) = java.time.Duration.between(now, at).toHours()
+
+    fun isSoon(at: Instant, now: Instant = Instant.now()) = hoursLeft(at, now) < SOON_DAYS * 24
+    fun isNotifiable(at: Instant, now: Instant = Instant.now()) = hoursLeft(at, now) < NOTIFY_DAYS * 24
+
+    /** «caduca hoy», «caduca mañana», «caduca en 5 días», «caducado». */
+    fun label(at: Instant, now: Instant = Instant.now()): String {
+        val h = hoursLeft(at, now)
+        return when {
+            h < 0 -> "caducado"
+            h < 24 -> "caduca hoy"
+            h < 48 -> "caduca mañana"
+            else -> "caduca en ${h / 24} días"
+        }
     }
 }
 

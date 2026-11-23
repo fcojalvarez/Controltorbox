@@ -13,7 +13,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
 enum class LibraryFilter(val label: String) {
-    ALL("Todo"), NO_ES("Sin español"), UNKNOWN("Sin comprobar"), DUPS("Duplicados"), ES("Con español")
+    ALL("Todo"), NO_ES("Sin español"), UNKNOWN("Sin comprobar"), DUPS("Duplicados"), ES("Con español"), EXPIRING("Caduca pronto")
 }
 
 enum class SortOrder(val key: String, val label: String) {
@@ -72,7 +72,20 @@ data class UiState(
     val accountLimit: Long? = null,
     /** true si el límite de la cuenta lo dio TorBox; false si lo pusiste tú. */
     val accountLimitFromTorbox: Boolean = false,
+    /** Cola de TorBox (aún sin empezar). */
+    val queued: List<QueuedItem> = emptyList(),
+    /** Claves con una acción en marcha (reanunciar, pausar…), para desactivar sus botones. */
+    val busy: Set<String> = emptySet(),
 ) {
+    /** Descargas sin terminar: primero las atascadas, luego por progreso. */
+    val downloading: List<ItemRow> get() = rows.filter { it.item.inProgress }
+        .sortedWith(compareByDescending<ItemRow> { it.item.stalled }.thenByDescending { it.item.progress })
+    val stalledCount: Int get() = rows.count { it.item.stalled }
+
+    /** Lo que TorBox quitará en los próximos días (los ya caducados también). */
+    val expiringRows: List<ItemRow> get() = rows.mapNotNull { r -> r.item.expiresAtInstant?.let { r to it } }
+        .filter { (_, at) -> Expiry.isSoon(at) }.sortedBy { it.second }.map { it.first }
+
     /** Tu aviso de espacio en bytes (null si está desactivado). */
     val alertLimit: Long? get() = if (notifyStorage && storageLimitGb > 0) storageLimitGb.toLong() * GB else null
 
@@ -113,10 +126,11 @@ data class UiState(
                         LibraryFilter.UNKNOWN -> r.status == AudioStatus.UNKNOWN && r.hasVideo
                         LibraryFilter.DUPS -> r.duplicate != null
                         LibraryFilter.ES -> r.status == AudioStatus.ES
+                        LibraryFilter.EXPIRING -> r.item.expiresAtInstant?.let { Expiry.isSoon(it) } == true
                     }
             },
-            sort,
-        )
+            if (filter == LibraryFilter.EXPIRING) SortOrder.DATE_ASC else sort,
+        ).let { if (filter == LibraryFilter.EXPIRING) it.sortedBy { r -> r.item.expiresAtInstant } else it }
     }
 
     fun countFor(f: LibraryFilter) = when (f) {
@@ -125,6 +139,7 @@ data class UiState(
         LibraryFilter.UNKNOWN -> rows.count { it.status == AudioStatus.UNKNOWN && it.hasVideo }
         LibraryFilter.DUPS -> rows.count { it.duplicate != null }
         LibraryFilter.ES -> rows.count { it.status == AudioStatus.ES }
+        LibraryFilter.EXPIRING -> rows.count { r -> r.item.expiresAtInstant?.let { Expiry.isSoon(it) } == true }
     }
 
     val selectedRows: List<ItemRow> get() = rows.filter { it.key in selected }
@@ -224,6 +239,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 items = list
                 rebuildRows()
                 _state.update { it.copy(error = errors.takeIf { e -> e.isNotEmpty() }?.joinToString("\n")) }
+                // Cola de TorBox (si falla un tipo, se ignora).
+                val queued = Kind.entries.flatMap { k -> runCatching { api().queued(k) }.getOrDefault(emptyList()) }
+                _state.update { it.copy(queued = queued) }
                 // Plan y límite de la cuenta (si falla, se mantiene lo último guardado).
                 try {
                     val acc = api().account()
@@ -320,6 +338,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    // -- Descargas y cola -----------------------------------------------------------
+    private fun runAction(key: String, done: String, block: suspend () -> Unit) {
+        if (key in _state.value.busy) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = it.busy + key) }
+            try {
+                block()
+                _state.update { it.copy(message = done) }
+                refresh()
+            } catch (e: TorboxException) {
+                _state.update { it.copy(error = e.message) }
+            } finally {
+                _state.update { it.copy(busy = it.busy - key) }
+            }
+        }
+    }
+
+    /** Pide a TorBox que vuelva a buscar fuentes (torrents atascados). */
+    fun reannounce(item: TorboxItem) = runAction(item.key, "Reanunciado: TorBox buscará fuentes de nuevo.") {
+        api().control(item.kind, item.id, "reannounce")
+    }
+
+    fun pause(item: TorboxItem) = runAction(item.key, "Pausado.") { api().control(item.kind, item.id, "pause") }
+    fun resume(item: TorboxItem) = runAction(item.key, "Reanudado.") { api().control(item.kind, item.id, "resume") }
+
+    fun startQueued(q: QueuedItem) = runAction(q.key, "Iniciado: pasa a descargarse.") { api().controlQueued(q, "start") }
+    fun deleteQueued(q: QueuedItem) = runAction(q.key, "Quitado de la cola.") { api().controlQueued(q, "delete") }
 
     // -- Audio --------------------------------------------------------------------
     suspend fun linkFor(item: TorboxItem, fileId: Long? = null): String {

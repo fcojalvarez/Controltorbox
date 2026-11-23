@@ -72,10 +72,29 @@ class TorboxApi(
         return items to errors
     }
 
-    suspend fun delete(kind: Kind, id: Long): Unit = withContext(Dispatchers.IO) {
+    suspend fun delete(kind: Kind, id: Long) = control(kind, id, "delete")
+
+    /** Operaciones de TorBox sobre una descarga: delete, reannounce, pause, resume. */
+    suspend fun control(kind: Kind, id: Long, operation: String): Unit = withContext(Dispatchers.IO) {
         // TorBox exige también "all" (false = solo este elemento).
-        val body = JSONObject().put(kind.controlIdField, id).put("operation", "delete").put("all", false).toString()
+        val body = JSONObject().put(kind.controlIdField, id).put("operation", operation).put("all", false).toString()
         execute(Request.Builder().url(url(kind.controlPath)).post(body.toRequestBody(JSON)).build())
+        Unit
+    }
+
+    /** Cola de TorBox para un tipo de descarga. */
+    suspend fun queued(kind: Kind): List<QueuedItem> = withContext(Dispatchers.IO) {
+        val u = url("queued/getqueued").newBuilder()
+            .addQueryParameter("type", kind.key).addQueryParameter("bypass_cache", "true").build()
+        val arr = execute(Request.Builder().url(u).get().build()) as? JSONArray ?: return@withContext emptyList()
+        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { parseQueued(kind, it) } }
+    }
+
+    /** Iniciar («start») o borrar («delete») algo de la cola. */
+    suspend fun controlQueued(item: QueuedItem, operation: String): Unit = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("queued_id", item.id).put("operation", operation).put("type", item.kind.key)
+            .put("all", false).toString()
+        execute(Request.Builder().url(url("queued/controlqueued")).post(body.toRequestBody(JSON)).build())
         Unit
     }
 
@@ -143,7 +162,10 @@ class TorboxApi(
                     )
                 }
             }
-            val state = o.optString("download_state")
+            val state = o.str("download_state", "downloadState")
+            val rawProgress = o.num("progress")
+            val finished = o.bool("download_finished", "downloadFinished") ||
+                state.lowercase() in setOf("completed", "cached", "uploading", "seeding")
             return TorboxItem(
                 kind = kind,
                 id = o.optLong("id"),
@@ -151,10 +173,36 @@ class TorboxApi(
                 size = o.optLong("size"),
                 createdAt = o.optString("created_at").takeIf { it.isNotBlank() && it != "null" },
                 hash = o.optString("hash").takeIf { it != "null" }.orEmpty(),
-                downloadFinished = o.optBoolean("download_finished", false) ||
-                    state in setOf("completed", "cached", "uploading", "seeding"),
+                downloadFinished = finished,
                 files = files,
+                state = state,
+                // TorBox lo da de 0 a 1; por si acaso, se acepta también de 0 a 100.
+                progress = rawProgress?.let { (if (it > 1.0) it / 100.0 else it).toFloat().coerceIn(0f, 1f) }
+                    ?: if (finished) 1f else 0f,
+                downloadSpeed = o.num("download_speed", "downloadSpeed")?.toLong() ?: 0,
+                eta = o.num("eta")?.toLong()?.takeIf { it > 0 },
+                seeds = o.num("seeds")?.toInt(),
+                peers = o.num("peers")?.toInt(),
+                availability = o.num("availability"),
+                expiresAt = o.str("expires_at", "expiresAt").takeIf { it.isNotBlank() },
             )
         }
+
+        /** Elemento de la cola de TorBox (aún no empezado). */
+        fun parseQueued(kind: Kind, o: JSONObject): QueuedItem = QueuedItem(
+            kind = kind,
+            id = o.optLong("id"),
+            name = o.str("name").ifBlank { "${kind.label} en cola ${o.optLong("id")}" },
+            createdAt = o.str("created_at", "createdAt").takeIf { it.isNotBlank() },
+            hash = o.str("hash"),
+        )
+
+        private fun JSONObject.str(vararg keys: String): String =
+            keys.firstNotNullOfOrNull { k -> optString(k).takeIf { has(k) && !isNull(k) && it != "null" } } ?: ""
+
+        private fun JSONObject.num(vararg keys: String): Double? =
+            keys.firstNotNullOfOrNull { k -> if (has(k) && !isNull(k)) optDouble(k).takeIf { !it.isNaN() } else null }
+
+        private fun JSONObject.bool(vararg keys: String): Boolean = keys.any { k -> has(k) && optBoolean(k, false) }
     }
 }
