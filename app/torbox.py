@@ -94,11 +94,28 @@ class TorboxClient:
         return data or []
 
     def delete(self, kind: str, item_id: int) -> None:
+        self.control(kind, item_id, "delete")
+
+    def control(self, kind: str, item_id: int, operation: str) -> None:
+        """Operaciones sobre una descarga: delete, reannounce, pause, resume."""
         k = KINDS[kind]
         resp = self._client.post(
             k.control_path,
             # TorBox exige también "all" (False = solo este elemento).
-            json={k.control_id_field: int(item_id), "operation": "delete", "all": False},
+            json={k.control_id_field: int(item_id), "operation": operation, "all": False},
+        )
+        self._unwrap(resp)
+
+    def queued(self, kind: str) -> list[dict]:
+        """Cola de TorBox (aún sin empezar) para un tipo de descarga."""
+        resp = self._client.get("/queued/getqueued", params={"type": kind, "bypass_cache": "true"})
+        return self._unwrap(resp) or []
+
+    def control_queued(self, kind: str, queued_id: int, operation: str) -> None:
+        """Iniciar («start») o borrar («delete») algo de la cola."""
+        resp = self._client.post(
+            "/queued/controlqueued",
+            json={"queued_id": int(queued_id), "operation": operation, "type": kind, "all": False},
         )
         self._unwrap(resp)
 

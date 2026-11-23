@@ -35,6 +35,8 @@ const ICON = {
   muted: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5l14 14"/><path d="M7 4l13 8-4 2.5"/><path d="M7 11v9l5-3"/></svg>',
   movie: '<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16"/><path d="M17 4v16"/></svg>',
   tv: '<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 21h8"/></svg>',
+  clock: '<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  download: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>',
   library: '<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M8 4v5"/><path d="M16 4v5"/></svg>',
 };
 
@@ -115,11 +117,44 @@ async function api(path, body, method = "POST") {
 }
 
 /* -------------------------- Estado -------------------------------------- */
-const FILTERS = [["all", "Todo"], ["no_es", "Sin español"], ["unknown", "Sin comprobar"], ["dups", "Duplicados"], ["es", "Con español"]];
+const FILTERS = [["all", "Todo"], ["no_es", "Sin español"], ["unknown", "Sin comprobar"], ["dups", "Duplicados"], ["es", "Con español"], ["expiring", "Caduca pronto"]];
+
+/* ---- Caducidad y descargas ---- */
+const DAY = 864e5;
+const expTime = (it) => parseDate(it.expires_at);
+const isSoon = (t) => t != null && t - Date.now() < 7 * DAY;
+function expiryLabel(t) {
+  const h = (t - Date.now()) / 3.6e6;
+  if (h < 0) return "caducado";
+  if (h < 24) return "caduca hoy";
+  if (h < 48) return "caduca mañana";
+  return `caduca en ${Math.floor(h / 24)} días`;
+}
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const expiringRows = () => state.items.filter((it) => isSoon(expTime(it))).sort((a, b) => expTime(a) - expTime(b));
+function etaLabel(sec) {
+  if (!sec) return null;
+  const m = Math.floor(sec / 60);
+  if (sec < 60) return "menos de 1 min";
+  return m < 60 ? `quedan ${m} min` : `quedan ${Math.floor(m / 60)} h ${m % 60} min`;
+}
+function downloadLine(it) {
+  const pct = `${Math.round((it.progress || 0) * 100)} %`;
+  const tor = it.kind === "torrent";
+  if (it.paused) return `En pausa · ${pct}`;
+  if (it.stalled) {
+    return ["Atascada", it.state && !/stalled/i.test(it.state) ? `«${it.state}»` : null,
+      tor && it.seeds != null ? `${it.seeds} fuentes` : null,
+      tor && it.availability != null ? `disponibilidad ${Number(it.availability).toFixed(1).replace(".", ",")}` : null].filter(Boolean).join(" · ");
+  }
+  return [pct, it.download_speed > 0 ? `${fmtSize(it.download_speed)}/s` : null, etaLabel(it.eta),
+    tor && it.seeds != null ? `${it.seeds} fuentes${it.peers != null ? ` · ${it.peers} pares` : ""}` : null].filter(Boolean).join(" · ");
+}
+const downloadingRows = () => state.items.filter((it) => it.in_progress).sort((a, b) => (b.stalled - a.stalled) || (b.progress - a.progress));
 const RANK = { es: 2, unknown: 1, no_es: 0 };
 
 const state = {
-  status: null, account: null, items: [], loaded: false, analyzing: null,
+  status: null, account: null, items: [], queued: [], busy: new Set(), loaded: false, analyzing: null,
   filter: "all", search: "", selecting: false, selected: new Set(),
   reviewKeys: null, decisions: new Map(), dupKeep: {},
   detail: null,
@@ -165,12 +200,13 @@ function dupGroups() {
 
 function matchFilter(it, f) {
   return { all: true, no_es: it.audio_status === "no_es", unknown: it.audio_status === "unknown" && it.has_video,
-    dups: !!it.duplicate_group, es: it.audio_status === "es" }[f];
+    dups: !!it.duplicate_group, es: it.audio_status === "es", expiring: isSoon(expTime(it)) }[f];
 }
 function libraryRows() {
   const q = state.search.trim().toLowerCase();
-  return sortItems(state.items.filter((it) =>
+  const rows = sortItems(state.items.filter((it) =>
     (!q || it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q)) && matchFilter(it, state.filter)), prefs.sort);
+  return state.filter === "expiring" ? rows.sort((a, b) => expTime(a) - expTime(b)) : rows;
 }
 
 const limits = () => {
@@ -230,6 +266,7 @@ async function load() {
     for (const k of [...state.selected]) if (!keys.has(k)) state.selected.delete(k);
     render();
     api("/api/account").then((a) => { state.account = a; render(); }).catch(() => {});
+    api("/api/queued").then((q) => { state.queued = q.queued; render(); }).catch(() => {});
   } catch (err) {
     state.loaded = true;
     render();
@@ -313,7 +350,7 @@ function render() {
   }
   const page = {
     inicio: pageHome, biblioteca: pageLibrary, ajustes: pageSettings,
-    revisar: pageReview, duplicados: pageDups, item: pageDetail,
+    revisar: pageReview, duplicados: pageDups, item: pageDetail, descargas: pageDownloads,
   }[r.name] || pageHome;
   view.innerHTML = page();
   $(".shell").className = "shell" + (isTab ? "" : " no-tabs");
@@ -373,11 +410,16 @@ function pageHome() {
       <button class="icon-btn" data-act="reload" aria-label="Recargar">${ICON.refresh}</button>
     </header>
     ${storageBar()}
+    ${downloadsCard()}
     <h2 class="section-title">Para limpiar</h2>
     <div class="stack">
       ${task("#/revisar", review.length > 0, "orange", ICON.noaudio, "Sin audio en español", reviewSub, "var(--orange)")}
       ${task("#/duplicados", groups.length > 0, "blue", ICON.copy, "Duplicados", groups.length
         ? `${groups.length} título${groups.length > 1 ? "s" : ""} repetido${groups.length > 1 ? "s" : ""} · libera ${fmtSize(freeable)}` : "No hay títulos repetidos", "var(--accent)")}
+      ${(() => { const exp = expiringRows(); return exp.length ? `<a class="task" href="#/biblioteca" data-act="filter-expiring">
+        <span class="tile orange">${ICON.clock}</span><span class="grow"><div class="t">Caduca pronto</div>
+        <div class="s">${exp.length} elemento${exp.length > 1 ? "s" : ""} · el primero ${expiryLabel(expTime(exp[0]))}</div></span>
+        <span class="act" style="color:var(--orange)">Ver</span>${ICON.chev}</a>` : ""; })()}
       <div class="task">
         <span class="tile gray">${ICON.wave}</span>
         <span class="grow"><div class="t">Idioma sin comprobar</div><div class="s">${esc(state.analyzing ||
@@ -391,6 +433,65 @@ function pageHome() {
           <span class="grow"><div class="t ellipsis">${esc(it.title)}</div><div class="small muted">${[relDate(timeOf(it)), fmtSize(it.size)].filter(Boolean).join(" · ")}</div></span>
           ${badge(it)}
         </a>`).join("")}</div>` : ""}`;
+}
+
+function downloadsCard() {
+  const dl = downloadingRows();
+  if (!dl.length && !state.queued.length) return "";
+  const stalled = dl.filter((it) => it.stalled).length;
+  const active = dl.length - stalled;
+  const sub = [active ? `${active} descargando` : null, stalled ? `${stalled} atascada${stalled > 1 ? "s" : ""}` : null,
+    state.queued.length ? `${state.queued.length} en cola` : null].filter(Boolean).join(" · ");
+  const color = stalled ? "var(--orange)" : "var(--accent)";
+  return `<a class="task" href="#/descargas" style="margin-top:14px">
+    <span class="tile ${stalled ? "orange" : "blue"}">${ICON.download}</span>
+    <span class="grow"><div class="t">Descargas</div><div class="s">${sub}</div></span>
+    <span class="act" style="color:${color}">Ver</span>${ICON.chev}</a>`;
+}
+
+/* ---- Descargas y cola ---- */
+function downloadActions(it) {
+  const busy = state.busy.has(keyOf(it)) ? "disabled" : "";
+  return [
+    it.kind === "torrent" && !it.paused ? `<button class="btn ${it.stalled ? "" : "outline"}" data-act="control" data-key="${keyOf(it)}" data-op="reannounce" ${busy}>Reanunciar</button>` : "",
+    it.paused ? `<button class="btn" data-act="control" data-key="${keyOf(it)}" data-op="resume" ${busy}>Reanudar</button>`
+      : it.kind === "usenet" ? `<button class="btn outline" data-act="control" data-key="${keyOf(it)}" data-op="pause" ${busy}>Pausar</button>` : "",
+  ].join("");
+}
+function downloadCard(it) {
+  return `<article class="review ${it.stalled ? "del" : ""}">
+    <a href="#/item/${it.kind}/${it.id}" style="text-decoration:none;color:inherit">
+      <div class="t">${esc(it.title)}</div><div class="small muted">${KIND_LABEL[it.kind]} · ${fmtSize(it.size)}</div></a>
+    <div class="dl-bar"><div style="width:${Math.round((it.progress || 0) * 100)}%;${it.stalled ? "background:var(--orange)" : ""}"></div></div>
+    <div class="small" style="color:${it.stalled ? "var(--orange)" : "var(--chip-text)"}">${esc(downloadLine(it))}</div>
+    <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${downloadActions(it)}
+      <button class="btn outline" data-act="delete-key" data-key="${keyOf(it)}">${ICON.trash}Borrar</button></div>
+  </article>`;
+}
+function pageDownloads() {
+  const dl = downloadingRows();
+  const stalled = dl.filter((it) => it.stalled);
+  const active = dl.filter((it) => !it.stalled);
+  return `
+    <header class="sub-top"><a class="icon-btn plain" href="#/inicio" aria-label="Volver">${ICON.back}</a><h1>Descargas</h1></header>
+    <p class="lead">Lo que TorBox está descargando, lo que se ha atascado y lo que está en cola.</p>
+    ${!dl.length && !state.queued.length ? '<p class="empty">No hay nada descargándose ni en cola.</p>' : ""}
+    ${stalled.length ? `<h2 class="section-title">Atascadas · ${stalled.length}</h2><div class="stack">${stalled.map(downloadCard).join("")}</div>` : ""}
+    ${active.length ? `<h2 class="section-title">Descargando · ${active.length}</h2><div class="stack">${active.map(downloadCard).join("")}</div>` : ""}
+    ${state.queued.length ? `<h2 class="section-title">En cola · ${state.queued.length}</h2><div class="stack">${state.queued.map((q) => {
+      const k = `queued:${q.kind}:${q.id}`, busy = state.busy.has(k) ? "disabled" : "";
+      return `<div class="task"><span class="grow"><div class="t">${esc(q.title || q.name)}</div>
+        <div class="s">${[KIND_LABEL[q.kind], relDate(parseDate(q.created_at)) ? `en cola ${relDate(parseDate(q.created_at))}` : null].filter(Boolean).join(" · ")}</div></span>
+        <button class="btn" data-act="queued" data-kind="${q.kind}" data-id="${q.id}" data-op="start" ${busy}>Iniciar</button>
+        <button class="btn outline" data-act="queued" data-kind="${q.kind}" data-id="${q.id}" data-op="delete" ${busy}>Quitar</button></div>`;
+    }).join("")}</div>` : ""}`;
+}
+
+async function busyAction(key, fn, done) {
+  if (state.busy.has(key)) return;
+  state.busy.add(key);
+  render();
+  try { await fn(); toast(done); await load(); } catch (err) { showError(err.message); } finally { state.busy.delete(key); render(); }
 }
 
 /* ---- Revisar sin español ---- */
@@ -490,10 +591,13 @@ function pageDups() {
 /* ---- Biblioteca ---- */
 function libraryLine(it) {
   const sel = state.selected.has(keyOf(it));
-  const meta = [it.quality || (it.files > 1 ? `${it.files} archivos` : null), fmtSize(it.size), shortDate(timeOf(it))].filter(Boolean).join(" · ");
+  const exp = isSoon(expTime(it)) ? expTime(it) : null;
+  const meta = [exp ? cap(expiryLabel(exp)) : null, it.in_progress ? (it.stalled ? "Atascada" : `${Math.round(it.progress * 100)} % descargado`) : null,
+    it.quality || (it.files > 1 ? `${it.files} archivos` : null), fmtSize(it.size), exp ? null : shortDate(timeOf(it))].filter(Boolean).join(" · ");
+  const warn = exp || it.stalled;
   const inner = `
     ${state.selecting ? `<input type="checkbox" ${sel ? "checked" : ""} aria-hidden="true" tabindex="-1">` : `<span class="tile gray small">${isSeries(it) ? ICON.tv : ICON.movie}</span>`}
-    <span class="grow"><div class="t ellipsis">${esc(it.title)}</div><div class="small muted ellipsis">${esc(meta)}</div></span>
+    <span class="grow"><div class="t ellipsis">${esc(it.title)}</div><div class="small ellipsis ${warn ? "" : "muted"}" ${warn ? 'style="color:var(--orange)"' : ""}>${esc(meta)}</div></span>
     <span class="end">${badge(it)}${it.duplicate_group ? '<span class="dup">Duplicado</span>' : ""}</span>`;
   return state.selecting
     ? `<div class="line ${sel ? "selected" : ""}" role="checkbox" aria-checked="${sel}" aria-label="${esc(it.title)}" tabindex="0" data-act="toggle-sel" data-key="${keyOf(it)}">${inner}</div>`
@@ -518,8 +622,9 @@ function pageLibrary() {
     <header class="top"><h1>${state.selecting ? `${sel.length} seleccionados` : "Biblioteca"}</h1></header>
     <label class="search">${ICON.search}<span class="hidden">Buscar</span>
       <input id="search" type="search" placeholder="Buscar película o serie" value="${esc(state.search)}" autocomplete="off"></label>
-    <div class="chips" role="group" aria-label="Filtros">${FILTERS.map(([k, label]) => {
+    <div class="chips" role="group" aria-label="Filtros">${[...FILTERS].sort(([a], [b]) => (b === state.filter && b === "expiring") - (a === state.filter && a === "expiring")).map(([k, label]) => {
       const n = state.items.filter((it) => matchFilter(it, k)).length;
+      if (k === "expiring" && !n && state.filter !== k) return "";
       return `<button class="chip" data-act="filter" data-f="${k}" aria-pressed="${state.filter === k}">${label}${k === "dups" ? "" : ` · ${n}`}</button>`;
     }).join("")}</div>
     <div id="lib-list">${libraryList()}</div>
@@ -631,8 +736,15 @@ function pageDetail() {
       <div class="muted" style="font-size:13px;margin-top:4px">${esc(meta)}</div>
       <div class="small muted" style="margin-top:2px">${esc(it.name)}</div>
       ${it.duplicate_group ? `<div class="small" style="margin-top:6px;color:var(--accent);font-weight:600">Tienes otra copia de «${esc(it.duplicate_label)}»</div>` : ""}
+      ${expTime(it) != null ? `<div class="small" style="margin-top:6px;${isSoon(expTime(it)) ? "color:var(--orange);font-weight:600" : "color:var(--muted)"}">TorBox lo quitará el ${shortDate(expTime(it))} · ${expiryLabel(expTime(it))}</div>` : ""}
     </div>
     <div class="stack" style="gap:14px">
+      ${it.in_progress ? `<section class="card pad" ${it.stalled ? 'style="border:2px solid var(--orange)"' : ""}>
+        <h2 style="margin:0;font-size:16px;${it.stalled ? "color:var(--orange)" : ""}">${it.stalled ? "Descarga atascada" : it.paused ? "Descarga en pausa" : "Descargando"}</h2>
+        <div class="dl-bar"><div style="width:${Math.round(it.progress * 100)}%;${it.stalled ? "background:var(--orange)" : ""}"></div></div>
+        <div class="small" style="color:var(--chip-text)">${esc(downloadLine(it))}</div>
+        ${it.stalled ? '<p class="small muted">No encuentra fuentes. Reanunciar pide a TorBox que las busque otra vez; si sigue igual, quizá convenga borrarla.</p>' : ""}
+        <div class="row" style="gap:8px;margin-top:10px">${downloadActions(it)}</div></section>` : ""}
       <div class="banner ${it.audio_status}">${bannerIcon}<div><div class="t">${bannerTitle}</div><div class="s">${esc(statusSub)}</div></div></div>
       <section class="card pad">
         <div class="row" style="align-items:baseline"><h2 class="grow" style="margin:0;font-size:16px">Pistas de audio</h2>
@@ -851,6 +963,22 @@ document.addEventListener("click", async (e) => {
       return;
     }
     case "change-token": return changeToken();
+    case "filter-expiring": state.filter = "expiring"; return;
+    case "control": {
+      const it = byKey(el.dataset.key);
+      const done = { reannounce: "Reanunciado: TorBox buscará fuentes de nuevo.", pause: "Pausado.", resume: "Reanudado." }[el.dataset.op];
+      return busyAction(keyOf(it), () => api(`/api/items/${it.kind}/${it.id}/control`, { operation: el.dataset.op }), done);
+    }
+    case "queued": {
+      const k = `queued:${el.dataset.kind}:${el.dataset.id}`;
+      return busyAction(k, () => api(`/api/queued/${el.dataset.kind}/${el.dataset.id}`, { operation: el.dataset.op }),
+        el.dataset.op === "start" ? "Iniciado: pasa a descargarse." : "Quitado de la cola.");
+    }
+    case "delete-key": {
+      const it = byKey(el.dataset.key);
+      if (it && await confirmDelete([it])) await deleteKeys([keyOf(it)]);
+      return;
+    }
     case "account-gb": {
       const v = prefs.accountGb, dir = Number(el.dataset.dir);
       const step = (dir > 0 ? v >= 1000 : v > 1000) ? 500 : 100;

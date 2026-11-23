@@ -341,3 +341,51 @@ def test_account_plan_and_detected_limit(tmp_path, monkeypatch):
     assert client.get("/api/account").json() == {"plan": 2, "plan_name": "Pro", "storage_limit": None}
     client = _series_app(tmp_path / "b", monkeypatch, user={"plan": 3, "storage_limit": 1000})
     assert client.get("/api/account").json()["storage_limit"] == 1000 * 1024 ** 3
+
+
+def test_download_info_and_stalled():
+    from app.main import download_info
+    d = download_info("torrent", {"download_state": "downloading", "progress": 0.4, "download_speed": 100, "seeds": 3,
+                                  "eta": 60, "expires_at": "2026-12-01T00:00:00Z"})
+    assert d["in_progress"] and not d["stalled"] and d["progress"] == 0.4 and d["eta"] == 60
+    assert d["expires_at"] == "2026-12-01T00:00:00Z"
+    assert download_info("torrent", {"downloadState": "stalled (no seeds)", "progress": 37})["stalled"]
+    assert download_info("torrent", {"downloadState": "stalled", "progress": 37})["progress"] == 0.37
+    assert download_info("torrent", {"download_state": "downloading", "seeds": 0, "download_speed": 0})["stalled"]
+    assert not download_info("usenet", {"download_state": "downloading", "seeds": 0, "download_speed": 0})["stalled"]
+    assert not download_info("torrent", {"download_state": "paused", "seeds": 0})["stalled"]
+    done = download_info("usenet", {"download_state": "completed"})
+    assert not done["in_progress"] and done["progress"] == 1.0
+
+
+def test_control_and_queue_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setenv("TORBOX_API_KEY", "x")
+    calls = []
+
+    def handler(r):
+        path = r.url.path.removeprefix("/v1/api")
+        if r.method == "POST":
+            calls.append((path, json.loads(r.read())))
+            return httpx.Response(200, json={"success": True, "data": None})
+        if path == "/queued/getqueued":
+            t = r.url.params["type"]
+            data = [{"id": 7, "name": "Show.S01.1080p", "created_at": "2026-11-22T10:00:00Z"}] if t == "usenet" else []
+            return httpx.Response(200, json={"success": True, "data": data})
+        return httpx.Response(200, json={"success": True, "data": []})
+
+    import json
+    transport = httpx.MockTransport(handler)
+    client = TestClient(create_app(client_factory=lambda k: TorboxClient(k, transport=transport), data_dir=tmp_path))
+    q = client.get("/api/queued").json()["queued"]
+    assert q == [{"kind": "usenet", "id": 7, "name": "Show.S01.1080p", "title": "Show · T1", "created_at": "2026-11-22T10:00:00Z"}]
+    assert client.post("/api/queued/usenet/7", json={"operation": "start"}).status_code == 200
+    assert calls[-1] == ("/queued/controlqueued", {"queued_id": 7, "operation": "start", "type": "usenet", "all": False})
+    assert client.post("/api/items/torrent/5/control", json={"operation": "reannounce"}).status_code == 200
+    assert calls[-1] == ("/torrents/controltorrent", {"torrent_id": 5, "operation": "reannounce", "all": False})
+    assert client.post("/api/items/torrent/5/control", json={"operation": "delete"}).status_code == 422  # borrar va por /api/delete
+
+
+def test_items_without_state_are_finished():
+    from app.main import download_info
+    assert not download_info("torrent", {"name": "x"})["in_progress"]
+    assert download_info("torrent", {"download_finished": False})["in_progress"]

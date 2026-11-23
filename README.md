@@ -25,6 +25,12 @@ marcar a mano y eliminar) y además **notificaciones**. Todas las comprobaciones
 - **Nuevo duplicado**: se ha añadido algo que ya tenías.
 - **Espacio ocupado**: el total supera el límite que elijas (avisa al cruzarlo, no en cada comprobación).
 - **Nueva versión de la app**: hay una versión más reciente publicada en GitHub.
+- **Caduca pronto**: TorBox va a quitar algo en 3 días o menos (un aviso por elemento).
+
+Además, en la app y en la web: tarea **Caduca pronto** (con filtro en la Biblioteca y la fecha
+en la ficha), y pantalla **Descargas** con lo que se está descargando (progreso, velocidad,
+tiempo restante, fuentes), las **atascadas** (sin fuentes o con error) con *Reanunciar*,
+*Pausar/Reanudar* (Usenet) y *Borrar*, y la **cola** de TorBox con *Iniciar* y *Quitar*.
 
 Notas:
 - El análisis y la escucha usan el reproductor de Android: no descargan la película entera.

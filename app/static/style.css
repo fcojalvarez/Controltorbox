@@ -202,3 +202,6 @@ dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; ma
 @keyframes load { 0% { transform: scaleX(0); } 50% { transform: scaleX(.7); } 100% { transform: scaleX(1); opacity: 0; } }
 .empty { text-align: center; color: var(--muted); padding: 32px 16px; }
 footer.ver { margin: 24px 0 8px; text-align: center; color: var(--muted); font-size: 12px; }
+
+.dl-bar { height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; margin: 10px 0 8px; }
+.dl-bar > div { height: 100%; background: var(--accent); }

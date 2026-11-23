@@ -37,6 +37,7 @@ class DownloadsTest {
         assertTrue(camel.stalled)
         assertEquals(Instant.parse("2026-12-02T10:00:00Z"), camel.expiresAtInstant)
 
+        assertFalse(TorboxApi.parseItem(Kind.TORRENT, JSONObject("""{"id":9,"name":"Z","files":[]}""")).inProgress)
         val done = TorboxApi.parseItem(Kind.USENET, JSONObject("""{"id":3,"name":"C","download_state":"completed","files":[]}"""))
         assertFalse(done.inProgress)
         assertEquals(1f, done.progress, 0.001f)

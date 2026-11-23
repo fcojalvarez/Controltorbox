@@ -212,6 +212,14 @@ class SettingsRequest(BaseModel):
     api_key: str = Field(min_length=1, max_length=512)
 
 
+class ControlRequest(BaseModel):
+    operation: str = Field(pattern="^(reannounce|pause|resume)$")
+
+
+class QueuedControlRequest(BaseModel):
+    operation: str = Field(pattern="^(start|delete)$")
+
+
 class KeptRequest(BaseModel):
     kept: bool
 
@@ -246,6 +254,57 @@ def episode_summary(episodes: list[dict]) -> str | None:
     return " · ".join(parts)
 
 
+def _field(raw: dict, *keys, default=None):
+    """TorBox puede devolver los campos en snake_case o camelCase."""
+    for k in keys:
+        if raw.get(k) is not None:
+            return raw[k]
+    return default
+
+
+FINISHED_STATES = {"completed", "cached", "uploading", "seeding"}
+
+
+def download_info(kind: str, raw: dict) -> dict:
+    """Estado de la descarga: progreso, velocidad, fuentes, atascada…"""
+    state = str(_field(raw, "download_state", "downloadState", default="") or "")
+    flag = _field(raw, "download_finished", "downloadFinished")
+    # Sin ningún dato de estado se da por terminado (no se inventan descargas en curso).
+    finished = bool(flag) or state.lower() in FINISHED_STATES or (flag is None and not state)
+    progress = _field(raw, "progress")
+    if isinstance(progress, (int, float)):
+        progress = progress / 100 if progress > 1 else progress
+        progress = max(0.0, min(1.0, float(progress)))
+    else:
+        progress = 1.0 if finished else 0.0
+    speed = int(_field(raw, "download_speed", "downloadSpeed", default=0) or 0)
+    seeds = _field(raw, "seeds")
+    availability = _field(raw, "availability")
+    paused = "pause" in state.lower()
+    stalled = False
+    if not finished and not paused:
+        s = state.lower()
+        if any(w in s for w in ("stalled", "error", "missing", "failed")):
+            stalled = True
+        elif kind == "torrent":  # Usenet no tiene «seeds»
+            no_sources = seeds == 0 or (isinstance(availability, (int, float)) and availability < 1)
+            stalled = no_sources and speed == 0
+    eta = _field(raw, "eta")
+    return {
+        "state": state,
+        "in_progress": not finished,
+        "progress": progress,
+        "download_speed": speed,
+        "eta": eta if isinstance(eta, (int, float)) and eta > 0 else None,
+        "seeds": seeds,
+        "peers": _field(raw, "peers"),
+        "availability": availability,
+        "paused": paused,
+        "stalled": stalled,
+        "expires_at": _field(raw, "expires_at", "expiresAt"),
+    }
+
+
 def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
     files = raw.get("files") or []
     main = language.pick_main_video(files)
@@ -269,6 +328,7 @@ def build_item(kind: str, raw: dict, cache: AnalysisCache) -> dict:
         "name": name,
         "title": titles.clean(name),
         "quality": titles.quality(name),
+        **download_info(kind, raw),
         "kept": bool(analysis.get("kept")),
         "analyzed": "tracks" in analysis,
         "video_count": len(videos),
@@ -577,6 +637,43 @@ def create_app(client_factory=None, data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Tipo desconocido")
         cache.update(_key(kind, item_id), kept=True if req.kept else None)
         return {"ok": True, "kept": req.kept}
+
+    @app.post("/api/items/{kind}/{item_id}/control")
+    def control_item(kind: str, item_id: int, req: ControlRequest, client=Depends(get_client)):
+        """Reanunciar un torrent atascado, o pausar/reanudar una descarga."""
+        if kind not in KINDS:
+            raise HTTPException(status_code=404, detail="Tipo desconocido")
+        try:
+            client.control(kind, item_id, req.operation)
+        except TorboxError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True}
+
+    @app.get("/api/queued")
+    def list_queued(client=Depends(get_client)):
+        """Cola de TorBox de los tres tipos (si uno falla, se ignora)."""
+        out = []
+        for kind in KINDS:
+            try:
+                for q in client.queued(kind):
+                    out.append({
+                        "kind": kind, "id": q.get("id"), "name": q.get("name") or f"{kind} en cola",
+                        "title": titles.clean(q.get("name") or ""),
+                        "created_at": _field(q, "created_at", "createdAt"),
+                    })
+            except TorboxError:
+                continue
+        return {"queued": out}
+
+    @app.post("/api/queued/{kind}/{queued_id}")
+    def control_queued(kind: str, queued_id: int, req: QueuedControlRequest, client=Depends(get_client)):
+        if kind not in KINDS:
+            raise HTTPException(status_code=404, detail="Tipo desconocido")
+        try:
+            client.control_queued(kind, queued_id, req.operation)
+        except TorboxError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True}
 
     @app.get("/api/account")
     def account(client=Depends(get_client)):

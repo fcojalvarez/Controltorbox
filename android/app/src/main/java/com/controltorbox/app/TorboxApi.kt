@@ -164,8 +164,10 @@ class TorboxApi(
             }
             val state = o.str("download_state", "downloadState")
             val rawProgress = o.num("progress")
+            val hasFlag = o.has("download_finished") || o.has("downloadFinished")
+            // Sin ningún dato de estado se da por terminado (no se inventan descargas en curso).
             val finished = o.bool("download_finished", "downloadFinished") ||
-                state.lowercase() in setOf("completed", "cached", "uploading", "seeding")
+                state.lowercase() in setOf("completed", "cached", "uploading", "seeding") || (!hasFlag && state.isBlank())
             return TorboxItem(
                 kind = kind,
                 id = o.optLong("id"),
